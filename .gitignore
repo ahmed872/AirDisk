@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+coverage/
+*.log
+*.db
+*.db-wal
+*.db-shm
+*.adbk
+.DS_Store

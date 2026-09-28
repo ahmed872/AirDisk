@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, typecheck, tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test:coverage
+      - name: Build app
+        run: pnpm build
+      - name: Electron smoke test (real runtime, native modules)
+        run: |
+          xvfb-run -a node_modules/electron/dist/electron apps/desktop --no-sandbox --smoke-test=$RUNNER_TEMP/smoke.json
+          cat $RUNNER_TEMP/smoke.json
+      - name: UI end-to-end (Playwright + Electron)
+        run: xvfb-run -a node apps/desktop/e2e/foundation.e2e.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: apps/desktop/out/e2e-screenshots
+          retention-days: 7
+
+  windows:
+    name: Windows installer + packaged smoke test
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Unit + integration tests on Windows
+        run: pnpm test
+      - name: Build NSIS installer
+        run: pnpm dist:win
+      - name: Silent install
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', '/allusers' -Wait
+          if (-not (Test-Path "$env:ProgramFiles\AirDesk\AirDesk.exe")) { throw 'AirDesk.exe not installed' }
+      - name: Packaged smoke test (native SQLite + Argon2 inside Electron, post, backup, restore)
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\smoke.json"
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out" -Wait
+          Get-Content $out
+          $r = Get-Content $out | ConvertFrom-Json
+          if (-not $r.ok) { throw 'Smoke test failed' }
+      - name: Uninstall keeps company data
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
+          if (-not (Test-Path "$env:ProgramData\AirDesk")) { throw 'Data folder was removed by uninstall' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AirDesk-Setup-windows-x64
+          path: apps/desktop/dist/AirDesk-Setup-*-x64.exe
+          retention-days: 14

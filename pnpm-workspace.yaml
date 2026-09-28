@@ -1,0 +1,19 @@
+packages:
+  - apps/*
+  - packages/*
+
+# electron-builder packages a flat node_modules most reliably.
+nodeLinker: hoisted
+autoInstallPeers: true
+
+# Also fetch the Windows x64 prebuilt binaries of optional native packages
+# (e.g. @node-rs/argon2-win32-x64-msvc) so a Windows build can be assembled.
+supportedArchitectures:
+  os: [current, win32]
+  cpu: [current, x64]
+
+# Packages allowed to run install scripts (prebuilt native binaries).
+onlyBuiltDependencies:
+  - better-sqlite3-multiple-ciphers
+  - electron
+  - esbuild

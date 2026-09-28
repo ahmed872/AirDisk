@@ -1,0 +1,44 @@
+# Windows packaging (Phase 0 §11). Per-machine NSIS installer; data lives in
+# %ProgramData%\AirDesk and is NEVER removed by uninstall.
+appId: com.airdesk.desktop
+productName: AirDesk
+copyright: Copyright © AirDesk
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+asar: true
+asarUnpack:
+  - "**/*.node"
+npmRebuild: false  # native deps ship N-API prebuilds for win32-x64; nothing to rebuild
+buildDependenciesFromSource: false
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: AirDesk-Setup-${version}-x64.${ext}
+  # Code signing (Phase 10; certificate decision pending) is configured only in
+  # the protected release workflow. Unsigned builds are for testing.
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: true
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AirDesk
+  deleteAppDataOnUninstall: false
+  include: build/installer.nsh
+# No update feed yet: offline installer distribution only (online updates: Phase 10).
+publish: []

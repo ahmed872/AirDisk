@@ -1,0 +1,23 @@
+{
+  "name": "@airdesk/backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Application services, persistence (SQLite), migrations, audit, backup. Transport-agnostic.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@airdesk/contracts": "workspace:*",
+    "@airdesk/domain": "workspace:*",
+    "@node-rs/argon2": "^2.2.1",
+    "better-sqlite3-multiple-ciphers": "^13.0.3",
+    "fflate": "^0.8.3",
+    "zod": "^4.6.5"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@airdesk/desktop",
+  "productName": "AirDesk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AirDesk — airline ticket office management",
+  "author": "AirDesk",
+  "license": "UNLICENSED",
+  "main": "out/main/index.js",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "dist:win": "electron-vite build && electron-builder --win nsis --x64 --publish never"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.1",
+    "better-sqlite3-multiple-ciphers": "^13.0.3"
+  },
+  "devDependencies": {
+    "@airdesk/backend": "workspace:*",
+    "@airdesk/contracts": "workspace:*",
+    "@airdesk/domain": "workspace:*",
+    "@vitejs/plugin-react": "^5.1.0",
+    "electron": "44.4.5",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  }
+}

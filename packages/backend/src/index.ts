@@ -1,0 +1,15 @@
+export { AppBackend, DB_FILE_NAME, type BackendOptions, type Services } from './app/backend';
+export { HANDLERS, accessOf, type DispatchRequest, type DispatchResponse, type SessionEffect } from './app/dispatcher';
+export { openDatabase, assertLocalPath } from './db/connection';
+export { MIGRATIONS } from './db/migrations';
+export { runMigrations, planMigrations, migrationChecksum, schemaVersion, type Migration } from './db/migrator';
+export { seedSystemData } from './db/seed';
+export { AuditLog, GENESIS_HASH, SYSTEM_ACTOR } from './audit/audit-log';
+export { runIntegrityChecks } from './integrity/integrity-service';
+export { createBackupFile, validateBackupFile, recoverPendingRestore, BACKUP_EXTENSION } from './backup/backup-service';
+export { createArgon2Hasher, PRODUCTION_ARGON2, TEST_ARGON2, type PasswordHasher } from './security/password-hasher';
+export { ManualClock, systemClock, type Clock } from './util/clock';
+export { createUlidGenerator } from './util/ids';
+export { createLogger, createMemoryLogger, consoleLogger, type Logger, type LogRecord } from './util/logger';
+export type { Actor } from './services/context';
+export type { PostedDocument } from './services/posting-service';

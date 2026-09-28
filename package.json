@@ -1,0 +1,41 @@
+{
+  "name": "airdesk",
+  "private": true,
+  "description": "AirDesk \u2014 commercial, offline-first airline ticket office management system (Windows desktop).",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "dev": "pnpm --filter @airdesk/desktop dev",
+    "build": "pnpm --filter @airdesk/desktop build",
+    "dist:win": "pnpm --filter @airdesk/desktop dist:win",
+    "e2e": "pnpm build && node apps/desktop/e2e/foundation.e2e.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "@vitest/coverage-v8": "^5.0.2",
+    "electron": "44.4.5",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "eslint": "^9.39.0",
+    "fast-check": "^4.10.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^7.3.6",
+    "vitest": "^5.0.2",
+    "playwright-core": "^1.56.0"
+  }
+}
