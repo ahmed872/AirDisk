@@ -230,7 +230,8 @@ export function defaultPermissionsForRole(roleCode: string): readonly string[] {
  */
 export const DOCUMENT_POST_PERMISSIONS: Readonly<Record<DocType, readonly string[]>> = {
   CUSTOMER_INVOICE: ['booking.issue', 'booking.adjust_price', 'booking.reissue', 'refund.manage'],
-  CUSTOMER_CREDIT_NOTE: ['booking.adjust_price', 'booking.void', 'refund.manage'],
+  // booking.issue: a discount agreed in the quote is posted as a credit note (4120) when the booking is issued.
+  CUSTOMER_CREDIT_NOTE: ['booking.issue', 'booking.adjust_price', 'booking.void', 'refund.manage'],
   CUSTOMER_RECEIPT: ['payment.customer.receive'],
   CUSTOMER_REFUND: ['payment.customer.refund'],
   SUPPLIER_BILL: ['booking.issue', 'booking.adjust_price', 'booking.change_supplier', 'booking.reissue', 'refund.manage'],

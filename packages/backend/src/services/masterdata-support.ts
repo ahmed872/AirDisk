@@ -2,7 +2,7 @@ import { digitsOnly, normalizeSearchText } from '@airdesk/domain';
 import type { PartyBalanceDto } from '@airdesk/contracts';
 import type { Db } from '../db/driver';
 
-export type SearchEntity = 'customer' | 'supplier' | 'airline';
+export type SearchEntity = 'customer' | 'supplier' | 'airline' | 'airport' | 'booking';
 
 /**
  * Human-facing sequential numbers (C-000001, S-000001). Allocated inside the

@@ -39,7 +39,9 @@ describe('first-run setup (Phase 2)', () => {
     const company = (await env.call<CompanyProfileDto>('company.get', {}, s)).data!;
     // Nothing about the development company is hard-coded: the market comes from setup.
     expect(company).toMatchObject({ baseCurrencyCode: 'SAR', defaultCountryCode: 'SA', timezone: 'Asia/Riyadh', dateFormat: 'DD/MM/YYYY', textDirection: 'AUTO' });
-    expect(auditActions(env)).toEqual(['setup.completed', 'user.created', 'auth.login']);
+    // Setup also opens a cash account in the chosen base currency (audited).
+    expect(auditActions(env)).toEqual(['setup.completed', 'user.created', 'money_account.created', 'auth.login']);
+    expect((env.backend.svc.deps.db.prepare('SELECT currency_code FROM money_account').all() as { currency_code: string }[]).map((r) => r.currency_code)).toEqual(['SAR']);
   });
 
   it('rejects an invalid company configuration without creating anything', async () => {

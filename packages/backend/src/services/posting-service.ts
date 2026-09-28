@@ -274,7 +274,8 @@ export class PostingService {
     return `${row.prefix}-${year}-${String(row.next_value).padStart(6, '0')}`;
   }
 
-  private assertBackdateAllowed(actor: Actor, docDate: string): void {
+  /** Also called by business commands BEFORE their write transaction (denials must be audited outside it). */
+  assertBackdateAllowed(actor: Actor, docDate: string): void {
     const days = readSetting(this.deps.db, 'finance.backdate_days');
     const today = this.company.today();
     const limit = new Date(`${today}T00:00:00Z`);

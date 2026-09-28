@@ -1,6 +1,6 @@
 import { ZodError } from 'zod';
 import { DomainError, ErrorCode, isDomainError } from '@airdesk/domain';
-import { commandSchemas, type AuditEntryDto, type CommandError, type CommandName, type CommandResult, type DashboardSummaryDto, type SystemStatusDto } from '@airdesk/contracts';
+import { commandSchemas, type AboutDto, type AuditEntryDto, type CommandError, type CommandName, type CommandResult, type DashboardSummaryDto, type SystemStatusDto } from '@airdesk/contracts';
 import { requirePermission, type Actor } from '../services/context';
 import type { AppBackend } from './backend';
 
@@ -58,7 +58,14 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
       };
     },
   },
-  'system.setup': { access: PUBLIC, run: async ({ backend, workstation }, input) => backend.svc.auth.setup(input, workstation) },
+  'system.setup': {
+    access: PUBLIC,
+    run: async ({ backend, workstation }, input) => {
+      await backend.svc.auth.setup(input, workstation);
+      // Every installation starts with a cash account in its base currency (idempotent).
+      backend.svc.reference.ensureDefaultMoneyAccount(null);
+    },
+  },
 
   'auth.login': {
     access: PUBLIC,
@@ -224,6 +231,98 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
       }));
     },
   },
+
+  // ── Operations ─────────────────────────────────────────────────────────
+  'system.about': {
+    access: AUTH,
+    run: ({ backend }): AboutDto => {
+      const db = backend.svc.deps.db;
+      const migrations = (db.prepare('SELECT version, name, applied_at, app_version FROM schema_migration ORDER BY version').all() as { version: number; name: string; applied_at: string; app_version: string }[])
+        .map((m) => ({ version: m.version, name: m.name, appliedAt: m.applied_at, appVersion: m.app_version }));
+      return { appVersion: backend.appVersion, schemaVersion: backend.schemaVersionNow, latestSchemaVersion: backend.latestSchemaVersion, migrations, platform: process.platform, dataDirectory: null };
+    },
+  },
+
+  'airports.list': { access: perm('booking.view', 'booking.create', 'airport.manage'), run: (ctx, i) => ctx.backend.svc.reference.listAirports(actor(ctx), { ...i, sortBy: i.sortBy }) },
+  'airports.create': { access: perm('airport.manage'), run: (ctx, i) => ctx.backend.svc.reference.saveAirport(actor(ctx), i.airport, true) },
+  'airports.update': { access: perm('airport.manage'), run: (ctx, i) => ctx.backend.svc.reference.saveAirport(actor(ctx), i.airport, false, i.rowVersion) },
+  'airports.setActive': { access: perm('airport.manage'), run: (ctx, i) => ctx.backend.svc.reference.setAirportActive(actor(ctx), i.iataCode.toUpperCase(), i.active) },
+
+  'moneyAccounts.list': {
+    access: perm('treasury.view', 'treasury.manage_accounts', 'payment.customer.receive', 'payment.customer.refund', 'payment.supplier.pay', 'payment.supplier.record_refund', 'expense.create'),
+    run: (ctx, i) => ctx.backend.svc.reference.listMoneyAccounts(actor(ctx), i.includeInactive),
+  },
+  'moneyAccounts.save': { access: perm('treasury.manage_accounts'), run: (ctx, i) => ctx.backend.svc.reference.saveMoneyAccount(actor(ctx), i) },
+  'moneyAccounts.setActive': { access: perm('treasury.manage_accounts'), run: (ctx, i) => ctx.backend.svc.reference.setMoneyAccountActive(actor(ctx), i.id, i.active) },
+
+  'expenseCategories.list': { access: perm('expense.view', 'expense.create', 'expense.category.manage'), run: (ctx, i) => ctx.backend.svc.reference.listExpenseCategories(actor(ctx), i.includeArchived) },
+  'expenseCategories.accounts': { access: perm('expense.category.manage'), run: (ctx) => ctx.backend.svc.reference.expenseAccounts() },
+  'expenseCategories.save': { access: perm('expense.category.manage'), run: (ctx, i) => ctx.backend.svc.reference.saveExpenseCategory(actor(ctx), i) },
+  'expenseCategories.setActive': { access: perm('expense.category.manage'), run: (ctx, i) => ctx.backend.svc.reference.setExpenseCategoryActive(actor(ctx), i.id, i.active) },
+
+  'currency.setActive': { access: perm('finance.exchange_rates'), run: (ctx, i) => ctx.backend.svc.reference.setCurrencyActive(actor(ctx), i.currencyCode, i.active) },
+  'currency.rates': { access: perm('finance.exchange_rates', 'treasury.view', 'report.profit'), run: (ctx, i) => ctx.backend.svc.reference.listRates(actor(ctx), i.currencyCode) },
+  'currency.rateOn': { access: AUTH, run: (ctx, i) => ({ rate: ctx.backend.svc.currencies.rateOn(i.currencyCode, i.date) }) },
+
+  'bookings.list': { access: perm('booking.view'), run: (ctx, i) => ctx.backend.svc.bookings.list(actor(ctx), i) },
+  'bookings.get': { access: perm('booking.view'), run: (ctx, i) => ctx.backend.svc.bookings.get(actor(ctx), i.id) },
+  'bookings.create': { access: perm('booking.create'), run: (ctx, i) => ctx.backend.svc.bookings.create(actor(ctx), i) },
+  'bookings.update': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.update(actor(ctx), i.id, i.rowVersion, i.patch) },
+  'bookings.savePassenger': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.savePassenger(actor(ctx), i.bookingId, i.passengerId ?? null, i.passenger) },
+  'bookings.removePassenger': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.removePassenger(actor(ctx), i.bookingId, i.passengerId) },
+  'bookings.saveSegment': {
+    access: perm('booking.edit'),
+    run: (ctx, i) => ctx.backend.svc.bookings.saveSegment(actor(ctx), i.bookingId, i.segmentId ?? null, i.segment, { reason: i.reason ?? null, ...(i.source ? { source: i.source } : {}) }),
+  },
+  'bookings.removeSegment': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.removeSegment(actor(ctx), i.bookingId, i.segmentId) },
+  'bookings.savePriceItem': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.savePriceItem(actor(ctx), i.bookingId, i.itemId ?? null, i.item) },
+  'bookings.removePriceItem': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.removePriceItem(actor(ctx), i.bookingId, i.itemId) },
+  'bookings.reserve': { access: perm('booking.reserve'), run: (ctx, i) => ctx.backend.svc.bookings.reserve(actor(ctx), i.id, i.rowVersion, i.ticketingDeadlineAt) },
+  'bookings.release': { access: perm('booking.reserve'), run: (ctx, i) => ctx.backend.svc.bookings.release(actor(ctx), i.id, i.rowVersion) },
+  'bookings.discard': { access: perm('booking.discard'), run: (ctx, i) => ctx.backend.svc.bookings.discard(actor(ctx), i.id, i.rowVersion, i.reason) },
+  'bookings.issue': { access: perm('booking.issue'), run: (ctx, i) => ctx.backend.svc.bookings.issue(actor(ctx), i.id, i) },
+  'bookings.setTicketNumber': { access: perm('booking.issue', 'booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.setTicketNumber(actor(ctx), i.bookingId, i.ticketId, i.ticketNumber) },
+  'bookings.adjustSale': { access: perm('booking.adjust_price'), run: (ctx, i) => ctx.backend.svc.bookings.adjustSale(actor(ctx), i.bookingId, i) },
+  'bookings.adjustCost': { access: perm('booking.adjust_price'), run: (ctx, i) => ctx.backend.svc.bookings.adjustCost(actor(ctx), i.bookingId, i) },
+  'bookings.changeSupplier': { access: perm('booking.change_supplier'), run: (ctx, i) => ctx.backend.svc.bookings.changeSupplier(actor(ctx), i.bookingId, i) },
+
+  'payments.receive': { access: perm('payment.customer.receive'), run: (ctx, i) => ctx.backend.svc.finance.receiveCustomerPayment(actor(ctx), i) },
+  'payments.refundCustomer': { access: perm('payment.customer.refund'), run: (ctx, i) => ctx.backend.svc.finance.refundCustomer(actor(ctx), i) },
+  'payments.paySupplier': { access: perm('payment.supplier.pay'), run: (ctx, i) => ctx.backend.svc.finance.paySupplier(actor(ctx), i) },
+  'payments.supplierRefund': { access: perm('payment.supplier.record_refund'), run: (ctx, i) => ctx.backend.svc.finance.recordSupplierRefund(actor(ctx), i) },
+  'documents.get': { access: AUTH, run: (ctx, i) => ctx.backend.svc.finance.document(actor(ctx), i.id) },
+  'documents.cancel': {
+    access: perm('payment.customer.reverse', 'payment.supplier.reverse', 'expense.reverse'),
+    run: (ctx, i) => ctx.backend.svc.finance.cancelDocument(actor(ctx), i.id, i.reason, i.date),
+  },
+
+  'expenses.create': { access: perm('expense.create'), run: (ctx, i) => ctx.backend.svc.finance.recordExpense(actor(ctx), i) },
+
+  'cancellations.list': { access: perm('refund.request', 'refund.manage'), run: (ctx, i) => ctx.backend.svc.finance.listCancellations(actor(ctx), i.status) },
+  'cancellations.get': { access: perm('refund.request', 'refund.manage', 'booking.view'), run: (ctx, i) => ctx.backend.svc.finance.cancellation(actor(ctx), i.id) },
+  'cancellations.request': { access: perm('refund.request'), run: (ctx, i) => ctx.backend.svc.finance.requestCancellation(actor(ctx), i) },
+  'cancellations.submit': { access: perm('refund.manage'), run: (ctx, i) => ctx.backend.svc.finance.submitToSupplier(actor(ctx), i.id, i.rowVersion) },
+  'cancellations.confirmSupplier': { access: perm('refund.manage'), run: (ctx, i) => ctx.backend.svc.finance.confirmSupplier(actor(ctx), i.id, i) },
+  'cancellations.rejectSupplier': { access: perm('refund.manage'), run: (ctx, i) => ctx.backend.svc.finance.rejectSupplier(actor(ctx), i.id, i.rowVersion, i.note) },
+  'cancellations.creditCustomer': { access: perm('refund.manage'), run: (ctx, i) => ctx.backend.svc.finance.creditCustomer(actor(ctx), i.id, i) },
+  'cancellations.customerNotApplicable': { access: perm('refund.manage'), run: (ctx, i) => ctx.backend.svc.finance.customerNotApplicable(actor(ctx), i.id, i.rowVersion, i.note) },
+  'cancellations.withdraw': { access: perm('refund.request', 'refund.manage'), run: (ctx, i) => ctx.backend.svc.finance.withdraw(actor(ctx), i.id, i.rowVersion, i.reason) },
+
+  'schedule.list': { access: perm('booking.view', 'report.schedule_changes'), run: (ctx, i) => ctx.backend.svc.operations.listChanges(actor(ctx), i) },
+  'schedule.setStatus': { access: perm('schedule.notify', 'schedule.confirm'), run: (ctx, i) => ctx.backend.svc.operations.setChangeStatus(actor(ctx), i.id, i) },
+  'notifications.channels': { access: AUTH, run: (ctx) => ctx.backend.svc.operations.channels() },
+  'notifications.draft': { access: perm('schedule.notify'), run: (ctx, i) => ctx.backend.svc.operations.draftMessage(actor(ctx), i.changeId, i.locale) },
+  'notifications.record': { access: perm('schedule.notify'), run: (ctx, i) => ctx.backend.svc.operations.recordNotification(actor(ctx), i) },
+  'travel.upcoming': { access: perm('booking.view'), run: (ctx, i) => ctx.backend.svc.operations.upcomingTravel(actor(ctx), i) },
+
+  'statements.get': { access: perm('report.statements'), run: (ctx, i) => ctx.backend.svc.reports.statement(actor(ctx), i.party, i.partyId, i.from, i.to) },
+  'aging.get': { access: perm('report.receivables', 'report.payables'), run: (ctx, i) => ctx.backend.svc.reports.aging(actor(ctx), i.party, i.asOf) },
+  'reports.run': {
+    access: perm('report.sales', 'report.purchases', 'report.profit', 'report.receivables', 'report.payables', 'report.supplier_performance', 'report.expenses', 'report.refunds', 'report.schedule_changes', 'report.employee_activity'),
+    run: (ctx, i) => ctx.backend.svc.reports.run(actor(ctx), i.report, i.from, i.to),
+  },
+  'dashboard.metrics': { access: perm('dashboard.operational', 'dashboard.financial'), run: (ctx, i) => ctx.backend.svc.reports.dashboard(actor(ctx), i.from, i.to) },
+  'search.global': { access: AUTH, run: (ctx, i) => ctx.backend.svc.reports.search(actor(ctx), i.query) },
 };
 
 export function accessOf(command: CommandName): Access {

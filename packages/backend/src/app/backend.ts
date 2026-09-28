@@ -31,6 +31,11 @@ import { UserService } from '../services/user-service';
 import { CustomerService } from '../services/customer-service';
 import { SupplierService } from '../services/supplier-service';
 import { AirlineService } from '../services/airline-service';
+import { BookingService } from '../services/booking-service';
+import { FinanceService } from '../services/finance-service';
+import { OperationsService } from '../services/operations-service';
+import { ReferenceService } from '../services/reference-service';
+import { ReportService } from '../services/report-service';
 import { systemClock, type Clock } from '../util/clock';
 import { createUlidGenerator, type IdGenerator } from '../util/ids';
 import { consoleLogger, type Logger } from '../util/logger';
@@ -58,6 +63,11 @@ export interface Services {
   customers: CustomerService;
   suppliers: SupplierService;
   airlines: AirlineService;
+  reference: ReferenceService;
+  bookings: BookingService;
+  finance: FinanceService;
+  operations: OperationsService;
+  reports: ReportService;
 }
 
 export const DB_FILE_NAME = 'airdesk.db';
@@ -155,6 +165,7 @@ export class AppBackend {
     seedSystemData(this.db, { newId: this.newId, now: this.opts.clock.now().toISOString(), appVersion: this.opts.appVersion });
     this.services = this.buildServices(this.db);
     this.ensureSearchIndex();
+    this.services.reference.ensureDefaultMoneyAccount(null);
     const abandoned = this.services.sessions.recoverAbandoned();
     if (abandoned) logger.warn('Closed sessions left open by an unclean shutdown', { count: abandoned });
     this.lastStartupIntegrity = runIntegrityChecks(this.db, this.services.deps.audit, this.opts.clock, { quick: true });
@@ -172,7 +183,7 @@ export class AppBackend {
     }));
     const company = new CompanyService(deps);
     const currencies = new CurrencyService(deps, company);
-    return {
+    const base = {
       deps,
       company,
       auth: new AuthService(deps, hasher, sessions, company),
@@ -184,7 +195,14 @@ export class AppBackend {
       customers: new CustomerService(deps, company),
       suppliers: new SupplierService(deps, company),
       airlines: new AirlineService(deps, company),
-    };
+    } as Services;
+    const svc = base;
+    svc.reference = new ReferenceService(deps, company, currencies);
+    svc.bookings = new BookingService(deps, company, currencies, svc.posting, svc.reference);
+    svc.finance = new FinanceService(deps, company, currencies, svc.posting, svc.bookings, svc.reference);
+    svc.operations = new OperationsService(deps, company, svc.bookings);
+    svc.reports = new ReportService(deps, company, svc.ledger, svc.bookings);
+    return svc;
   }
 
   /**
@@ -199,6 +217,8 @@ export class AppBackend {
       ['customer', 'customer', (id: string) => svc.customers.reindex(id)],
       ['supplier', 'supplier', (id: string) => svc.suppliers.reindex(id)],
       ['airline', 'airline', (id: string) => svc.airlines.reindex(id)],
+      ['airport', 'airport', (id: string) => svc.reference.reindexAirport(id)],
+      ['booking', 'booking', (id: string) => svc.bookings.reindex(id)],
     ] as const;
     for (const [type, table, reindex] of types) {
       const rows = (this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
@@ -206,7 +226,8 @@ export class AppBackend {
       if (rows === indexed) continue;
       this.db.transaction(() => {
         this.db.prepare('DELETE FROM search_index WHERE entity_type = ?').run(type);
-        for (const { id } of this.db.prepare(`SELECT id FROM ${table}`).all() as { id: string }[]) reindex(id);
+        const key = table === 'airport' ? 'iata_code' : 'id';
+        for (const { id } of this.db.prepare(`SELECT ${key} AS id FROM ${table}`).all() as { id: string }[]) reindex(id);
       })();
       this.opts.logger.info('Rebuilt search index', { type, rows });
     }
@@ -317,6 +338,11 @@ export class AppBackend {
 
   get appVersion(): string {
     return this.opts.appVersion;
+  }
+
+  /** Highest schema version this application build knows (older builds refuse newer databases). */
+  get latestSchemaVersion(): number {
+    return this.opts.migrations.length;
   }
 
   get schemaVersionNow(): number {

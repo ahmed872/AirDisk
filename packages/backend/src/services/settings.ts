@@ -14,6 +14,7 @@ export const SETTING_SCHEMAS = {
   'finance.backdate_days': z.number().int().min(0).max(366),
   'aging.buckets': z.array(z.number().int().min(0)).min(1).max(10).refine((a) => a.every((v, i) => i === 0 || v > a[i - 1]!), 'ascending'),
   'backup.directory': z.string().max(1000).nullable(),
+  'schedule.major_threshold_minutes': z.number().int().min(5).max(1440),
 } as const;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;
@@ -27,6 +28,7 @@ export const SETTING_DEFAULTS: { [K in SettingKey]: SettingValue<K> } = {
   'finance.backdate_days': 3,
   'aging.buckets': [0, 7, 30, 60],
   'backup.directory': null,
+  'schedule.major_threshold_minutes': 60,
 };
 
 export function readSetting<K extends SettingKey>(db: Db, key: K): SettingValue<K> {
