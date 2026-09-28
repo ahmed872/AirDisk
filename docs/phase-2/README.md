@@ -310,7 +310,7 @@ The `windows-latest` job runs these steps on every push:
 
 Linux job for the same commit (run 36463088910): **green**, covering typecheck, lint, 176 tests with coverage, build, Electron smoke, and both E2E suites.
 
-Windows job result: see the addendum at the end of this report, which is filled in from the CI run on the final commit.
+Windows job for the same commit (run 36463088910, job 109066680274, `windows-latest`, Windows 10.0.26100, win32, Electron 44.4.5): **green, every step passed**; details in the addendum.
 
 ## 15. Installer result
 
@@ -371,6 +371,24 @@ Customer/supplier statements, receipts and payments UI and reports should follow
 
 ---
 
-### Addendum: CI verification on the final commit
+### Addendum: CI verification
 
-*(filled in below after the CI run completes)*
+The results below are from [CI run 36463088910](https://github.com/ahmed872/AirDisk/actions/runs/36463088910) on code commit `efaa624`. The later commits change only documentation.
+
+**Linux job** (`ubuntu-latest`): ✅. Typecheck, lint, 176/176 tests with coverage, build, Electron smoke, Phase 1 foundation E2E, Phase 2 E2E 20/20.
+
+**Windows job** (`windows-latest`, OS 10.0.26100, `platform: win32`, Electron 44.4.5, Node 24.21.0, SQLite 3.53.4): ✅
+
+| Step | Result |
+|---|---|
+| Unit + integration tests on Windows | 176 / 176 passed (15 files) |
+| NSIS installer build | `AirDesk-Setup-0.1.0-x64.exe` built (per-machine, fuses applied); uploaded as artifact `AirDesk-Setup-windows-x64` |
+| Silent install `/S /allusers` | `C:\Program Files\AirDesk\AirDesk.exe` present |
+| Packaged GUI launch + DB init | Process stayed up; created `C:\ProgramData\AirDesk\data\airdesk.db` (+ WAL/SHM) and `logs\` |
+| Packaged smoke, `full` | 14 / 14 steps passed: open+migrate (schema v2), first-run setup, setup refused a second time, login, post `INV-2026-000001`, validated backup, restore, create customer/supplier/airline, create Sales Agent, agent refused role management, data persists after restart, integrity |
+| Real data directory, `seed` | 10 / 10 steps in `C:\ProgramData\AirDesk\data`: setup, setup-twice refused, login, customer/supplier/airline, Sales Agent, agent refused, integrity |
+| Silent uninstall | Program removed; `airdesk.db` **preserved** |
+| Reinstall + `verify` | 7 / 7 steps: open+migrate, **setup not offered again**, login, customer/supplier/airline persisted, integrity |
+| Final uninstall | done |
+
+Interactive UAC prompts and physical Windows 10/11 machines remain the documented field-validation item (not a blocker).
