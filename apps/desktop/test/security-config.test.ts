@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveDataDir } from '../src/main/paths';
 import { CONTENT_SECURITY_POLICY, isAllowedExternalUrl, secureWebPreferences } from '../src/main/security';
@@ -32,6 +33,6 @@ describe('data directory', () => {
   it('uses ProgramData on packaged Windows, env override when set', () => {
     expect(resolveDataDir({ PROGRAMDATA: 'C:\\ProgramData' }, 'win32', true, '/u')).toMatch(/ProgramData.AirDesk.data$/);
     expect(resolveDataDir({ AIRDESK_DATA_DIR: 'D:\\AirDeskData' }, 'win32', true, '/u')).toBe('D:\\AirDeskData');
-    expect(resolveDataDir({}, 'linux', false, '/home/x/.config/AirDesk')).toBe('/home/x/.config/AirDesk/data');
+    expect(resolveDataDir({}, 'linux', false, join('home', 'x', 'AirDesk'))).toBe(join('home', 'x', 'AirDesk', 'data'));
   });
 });
