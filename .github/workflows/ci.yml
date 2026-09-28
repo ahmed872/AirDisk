@@ -28,17 +28,21 @@ jobs:
         run: |
           xvfb-run -a node_modules/electron/dist/electron apps/desktop --no-sandbox --smoke-test=$RUNNER_TEMP/smoke.json
           cat $RUNNER_TEMP/smoke.json
-      - name: UI end-to-end (Playwright + Electron)
+      - name: UI end-to-end — Phase 1 foundation (Playwright + Electron)
         run: xvfb-run -a node apps/desktop/e2e/foundation.e2e.mjs
+      - name: UI end-to-end — Phase 2 20-step scenario incl. restart (Playwright + Electron)
+        run: xvfb-run -a node apps/desktop/e2e/phase2.e2e.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: e2e-screenshots
-          path: apps/desktop/out/e2e-screenshots
+          path: |
+            apps/desktop/out/e2e-screenshots
+            apps/desktop/out/e2e-phase2
           retention-days: 7
 
   windows:
-    name: Windows installer + packaged smoke test
+    name: Windows installer, packaged app, setup, uninstall/reinstall
     runs-on: windows-latest
     needs: test
     steps:
@@ -59,19 +63,52 @@ jobs:
           $installer = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1
           Start-Process -FilePath $installer.FullName -ArgumentList '/S', '/allusers' -Wait
           if (-not (Test-Path "$env:ProgramFiles\AirDesk\AirDesk.exe")) { throw 'AirDesk.exe not installed' }
-      - name: Packaged smoke test (native SQLite + Argon2 inside Electron, post, backup, restore)
+      - name: Packaged launch initialises the real database (%ProgramData%\AirDesk\data)
+        shell: pwsh
+        run: |
+          $db = "$env:ProgramData\AirDesk\data\airdesk.db"
+          if (Test-Path $db) { throw 'Runner is not clean: database already exists' }
+          $p = Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -PassThru
+          $deadline = (Get-Date).AddSeconds(60)
+          while (-not (Test-Path $db) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+          Start-Sleep -Seconds 3
+          if ($p.HasExited) { throw "AirDesk exited early with code $($p.ExitCode)" }
+          if (-not (Test-Path $db)) { throw 'Database was not created by the packaged app' }
+          Stop-Process -Id $p.Id -Force
+          Get-Process AirDesk -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 3
+          Get-ChildItem "$env:ProgramData\AirDesk\data"
+      - name: Packaged smoke test (native SQLite + Argon2, setup, login, master data, post, backup, restore, restart)
         shell: pwsh
         run: |
           $out = "$env:RUNNER_TEMP\smoke.json"
           Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out" -Wait
           Get-Content $out
-          $r = Get-Content $out | ConvertFrom-Json
-          if (-not $r.ok) { throw 'Smoke test failed' }
+          if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Smoke test failed' }
+      - name: First-run setup + login + master data in the REAL data directory
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\seed.json"
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out", '--smoke-phase=seed', "--smoke-data-dir=$env:ProgramData\AirDesk\data" -Wait
+          Get-Content $out
+          if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Seed failed' }
       - name: Uninstall keeps company data
         shell: pwsh
         run: |
           Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
-          if (-not (Test-Path "$env:ProgramData\AirDesk")) { throw 'Data folder was removed by uninstall' }
+          Start-Sleep -Seconds 5
+          if (Test-Path "$env:ProgramFiles\AirDesk\AirDesk.exe") { throw 'Uninstall did not remove the program' }
+          if (-not (Test-Path "$env:ProgramData\AirDesk\data\airdesk.db")) { throw 'Company database was removed by uninstall' }
+      - name: Reinstall and verify the preserved data (no second setup, login works, records intact)
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', '/allusers' -Wait
+          $out = "$env:RUNNER_TEMP\verify.json"
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out", '--smoke-phase=verify', "--smoke-data-dir=$env:ProgramData\AirDesk\data" -Wait
+          Get-Content $out
+          if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Data verification after reinstall failed' }
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
       - uses: actions/upload-artifact@v4
         with:
           name: AirDesk-Setup-windows-x64

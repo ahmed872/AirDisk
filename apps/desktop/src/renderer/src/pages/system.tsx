@@ -27,7 +27,7 @@ export function SystemPage({ canBackup, canRestore, canCheck, onRestored }: { ca
   };
 
   return (
-    <div className="card" style={{ width: '100%' }}>
+    <div className="page card" data-testid="page-system">
       <h1>{t('navSystem')}</h1>
       {msg && <div className={`alert ${msg.ok ? 'ok' : 'error'}`}>{msg.text}</div>}
       <div className="actions">

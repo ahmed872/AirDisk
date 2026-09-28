@@ -215,3 +215,46 @@ describe('dashboard summary', () => {
     expect(agentView.users).toBeNull();
   });
 });
+
+describe('updates of suppliers and airlines', () => {
+  it('supplier update: validation, optimistic locking, archived read-only, restore, audit', async () => {
+    const { env, adminSession } = await ready();
+    const s = (await env.call<SupplierDto>('suppliers.create', { supplier: { name: 'Alpha Tours', defaultCurrencyCode: 'EGP', countryCode: 'SA', phonePrimary: '0501234567' } }, adminSession)).data!;
+    // Phones follow the supplier's own country, not the company's.
+    expect(s.phonePrimary).toBe('+966501234567');
+    const u = await env.call<SupplierDto>('suppliers.update', { id: s.id, rowVersion: s.rowVersion, supplier: { name: 'Alpha Tours LLC', defaultCurrencyCode: 'USD', paymentTermsDays: 30 } }, adminSession);
+    expect(u.ok && u.data).toMatchObject({ name: 'Alpha Tours LLC', defaultCurrencyCode: 'USD', paymentTermsDays: 30, rowVersion: s.rowVersion + 1 });
+    const stale = await env.call('suppliers.update', { id: s.id, rowVersion: s.rowVersion, supplier: { name: 'x', defaultCurrencyCode: 'EGP' } }, adminSession);
+    expect(!stale.ok && stale.error.code).toBe(ErrorCode.STALE_RECORD);
+    const bad = await env.call('suppliers.update', { id: s.id, rowVersion: u.data!.rowVersion, supplier: { name: 'x', defaultCurrencyCode: 'EGP', email: 'bad@' } }, adminSession);
+    expect(!bad.ok && bad.error.details?.reason).toBe('INVALID_EMAIL');
+    const missingAirline = await env.call('suppliers.update', { id: s.id, rowVersion: u.data!.rowVersion, supplier: { name: 'x', defaultCurrencyCode: 'EGP', airlineId: '01J0000000000000000000000A' } }, adminSession);
+    expect(missingAirline.ok).toBe(false);
+    const arch = (await env.call<SupplierDto>('suppliers.archive', { id: s.id }, adminSession)).data!;
+    const ro = await env.call('suppliers.update', { id: s.id, rowVersion: arch.rowVersion, supplier: { name: 'x', defaultCurrencyCode: 'EGP' } }, adminSession);
+    expect(!ro.ok && ro.error.details?.reason).toBe('ARCHIVED_READ_ONLY');
+    expect((await env.call<SupplierDto>('suppliers.restore', { id: s.id }, adminSession)).data!.status).toBe('ACTIVE');
+    const nf = await env.call('suppliers.get', { id: '01J0000000000000000000000A' }, adminSession);
+    expect(!nf.ok && nf.error.code).toBe(ErrorCode.NOT_FOUND);
+    expect(auditActions(env)).toEqual(expect.arrayContaining(['supplier.updated', 'supplier.restored']));
+  });
+
+  it('airline update: codes re-checked, stale edits refused, same-name warning, search re-indexed', async () => {
+    const { env, adminSession } = await ready();
+    const a = (await env.call<AirlineDto>('airlines.create', { airline: { nameEn: 'Saudia', iataCode: 'SV' } }, adminSession)).data!;
+    const b = (await env.call<AirlineDto>('airlines.create', { airline: { nameEn: 'Flynas', iataCode: 'XY' } }, adminSession)).data!;
+    const clash = await env.call('airlines.update', { id: b.id, rowVersion: b.rowVersion, airline: { nameEn: 'Flynas', iataCode: 'SV' } }, adminSession);
+    expect(!clash.ok && clash.error.details?.reason).toBe('DUPLICATE_CODE');
+    const sameName = await env.call('airlines.create', { airline: { nameEn: 'saudia' } }, adminSession);
+    expect(!sameName.ok && sameName.error.code).toBe(ErrorCode.DUPLICATE_WARNING);
+    const u = await env.call<AirlineDto>('airlines.update', { id: a.id, rowVersion: a.rowVersion, airline: { nameEn: 'Saudia', nameAr: 'السعودية', iataCode: 'SV', icaoCode: 'SVA', website: 'https://www.saudia.com' } }, adminSession);
+    expect(u.ok && u.data).toMatchObject({ nameAr: 'السعودية', icaoCode: 'SVA' });
+    const badUrl = await env.call('airlines.update', { id: a.id, rowVersion: u.data!.rowVersion, airline: { nameEn: 'Saudia', website: 'javascript:alert(1)' } }, adminSession);
+    expect(!badUrl.ok && badUrl.error.details?.reason).toBe('INVALID_URL');
+    const stale = await env.call('airlines.update', { id: a.id, rowVersion: a.rowVersion, airline: { nameEn: 'x' } }, adminSession);
+    expect(!stale.ok && stale.error.code).toBe(ErrorCode.STALE_RECORD);
+    expect((await env.call<PageDto<AirlineDto>>('airlines.list', { query: 'السعوديه' }, adminSession)).data!.items.map((x) => x.id)).toEqual([a.id]);
+    expect((await env.call<AirlineDto>('airlines.get', { id: a.id }, adminSession)).data!.website).toBe('https://www.saudia.com');
+    expect(auditActions(env)).toContain('airline.updated');
+  });
+});

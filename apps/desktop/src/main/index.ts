@@ -5,7 +5,7 @@ import { AppBackend, type Logger } from '@airdesk/backend';
 import { createFileLogger } from './file-logger';
 import { resolveDataDir } from './paths';
 import { CONTENT_SECURITY_POLICY, IPC_CHANNEL, isAllowedExternalUrl, secureWebPreferences } from './security';
-import { runSmokeTest } from './smoke-test';
+import { runSmokeTest, type SmokePhase } from './smoke-test';
 
 let backend: AppBackend | null = null;
 let logger: Logger | null = null;
@@ -104,7 +104,10 @@ app.on('before-quit', () => {
 
 void app.whenReady().then(async () => {
   if (smokeArg) {
-    const code = await runSmokeTest(smokeArg.slice('--smoke-test='.length), app.getVersion());
+    const arg = (name: string) => process.argv.find((x) => x.startsWith(`--${name}=`))?.slice(name.length + 3);
+    const phase = arg('smoke-phase') as SmokePhase | undefined;
+    const dir = arg('smoke-data-dir');
+    const code = await runSmokeTest(smokeArg.slice('--smoke-test='.length), app.getVersion(), { ...(phase ? { phase } : {}), ...(dir ? { dataDir: dir } : {}) });
     app.exit(code);
     return;
   }
