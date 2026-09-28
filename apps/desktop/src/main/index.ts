@@ -4,7 +4,8 @@ import { BrowserWindow, app, dialog, ipcMain, session, shell } from 'electron';
 import { AppBackend, type Logger } from '@airdesk/backend';
 import { createFileLogger } from './file-logger';
 import { resolveDataDir } from './paths';
-import { CONTENT_SECURITY_POLICY, IPC_CHANNEL, isAllowedExternalUrl, secureWebPreferences } from './security';
+import { writeFileSync } from 'node:fs';
+import { CONTENT_SECURITY_POLICY, EXPORT_CHANNEL, IPC_CHANNEL, MAX_EXPORT_TEXT, isAllowedExternalUrl, sanitizeExportName, secureWebPreferences } from './security';
 import { runSmokeTest, type SmokePhase } from './smoke-test';
 
 let backend: AppBackend | null = null;
@@ -73,6 +74,42 @@ function registerIpc(): void {
   });
 }
 
+/**
+ * User-confirmed exports (PDF of the current view, CSV of a report). The
+ * renderer never touches the filesystem: it asks, the user picks the location
+ * in a native dialog, and the export is audited. CSV additionally requires the
+ * report.export permission.
+ */
+function registerExportIpc(): void {
+  ipcMain.handle(EXPORT_CHANNEL, async (event, kind: unknown, name: unknown, content: unknown) => {
+    if (!backend || !isTrustedSender(event.senderFrame?.url ?? '')) return { ok: false, code: 'FORBIDDEN' };
+    const sid = sessionByWebContents.get(event.sender.id);
+    let actor;
+    try {
+      actor = sid ? backend.svc.sessions.resolve(sid) : null;
+    } catch {
+      actor = null;
+    }
+    if (!actor) return { ok: false, code: 'UNAUTHENTICATED' };
+    if (kind !== 'pdf' && kind !== 'csv') return { ok: false, code: 'VALIDATION' };
+    if (kind === 'csv' && (typeof content !== 'string' || content.length > MAX_EXPORT_TEXT)) return { ok: false, code: 'VALIDATION' };
+    if (kind === 'csv' && !actor.permissions.has('report.export')) return { ok: false, code: 'FORBIDDEN' };
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const fileName = sanitizeExportName(name, kind);
+    const choice = await dialog.showSaveDialog(win!, { defaultPath: fileName, filters: [kind === 'pdf' ? { name: 'PDF', extensions: ['pdf'] } : { name: 'CSV', extensions: ['csv'] }] });
+    if (choice.canceled || !choice.filePath) return { ok: false, code: 'CANCELLED' };
+    const target = choice.filePath.toLowerCase().endsWith(`.${kind}`) ? choice.filePath : `${choice.filePath}.${kind}`;
+    const data = kind === 'pdf'
+      ? await event.sender.printToPDF({ printBackground: true, pageSize: 'A4' })
+      : Buffer.from(`\uFEFF${content as string}`, 'utf8'); // BOM so Excel reads Arabic correctly
+    writeFileSync(target, data);
+    backend.svc.deps.audit.append({ userId: actor.userId, sessionId: actor.sessionId, workstation: hostname() }, {
+      action: kind === 'pdf' ? 'export.pdf' : 'export.csv', entityType: 'export', metadata: { fileName: fileName, bytes: data.length },
+    });
+    return { ok: true };
+  });
+}
+
 function hardenSessions(): void {
   const ses = session.defaultSession;
   ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
@@ -123,6 +160,7 @@ void app.whenReady().then(async () => {
   }
   hardenSessions();
   registerIpc();
+  registerExportIpc();
   createWindow();
 });
 

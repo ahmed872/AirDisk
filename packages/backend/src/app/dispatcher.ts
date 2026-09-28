@@ -290,6 +290,10 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
   'payments.refundCustomer': { access: perm('payment.customer.refund'), run: (ctx, i) => ctx.backend.svc.finance.refundCustomer(actor(ctx), i) },
   'payments.paySupplier': { access: perm('payment.supplier.pay'), run: (ctx, i) => ctx.backend.svc.finance.paySupplier(actor(ctx), i) },
   'payments.supplierRefund': { access: perm('payment.supplier.record_refund'), run: (ctx, i) => ctx.backend.svc.finance.recordSupplierRefund(actor(ctx), i) },
+  'payments.openItems': {
+    access: perm('payment.customer.receive', 'payment.customer.refund', 'payment.supplier.pay', 'payment.supplier.record_refund'),
+    run: (ctx, i) => ctx.backend.svc.finance.openItems(actor(ctx), i.party, i.partyId),
+  },
   'documents.get': { access: AUTH, run: (ctx, i) => ctx.backend.svc.finance.document(actor(ctx), i.id) },
   'documents.cancel': {
     access: perm('payment.customer.reverse', 'payment.supplier.reverse', 'expense.reverse'),

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveDataDir } from '../src/main/paths';
-import { CONTENT_SECURITY_POLICY, isAllowedExternalUrl, secureWebPreferences } from '../src/main/security';
+import { CONTENT_SECURITY_POLICY, isAllowedExternalUrl, sanitizeExportName, secureWebPreferences } from '../src/main/security';
 
 describe('Electron hardening (Phase 0 §06-10)', () => {
   it('renderer has no Node access and runs sandboxed with context isolation', () => {
@@ -26,6 +26,16 @@ describe('Electron hardening (Phase 0 §06-10)', () => {
     expect(CONTENT_SECURITY_POLICY).toContain("script-src 'self'");
     expect(CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
     expect(CONTENT_SECURITY_POLICY).not.toContain('unsafe-eval');
+  });
+});
+
+describe('exports', () => {
+  it('suggested export names cannot carry paths, reserved characters or another extension', () => {
+    expect(sanitizeExportName('Sales Sep 2026', 'csv')).toBe('Sales Sep 2026.csv');
+    expect(sanitizeExportName('../../Windows/system32/evil.exe', 'pdf')).toBe('_Windows_system32_evil.pdf');
+    expect(sanitizeExportName('a:b*c?"<>|.pdf', 'pdf')).toBe('a_b_c_.pdf');
+    expect(sanitizeExportName(42, 'csv')).toBe('export.csv');
+    expect(sanitizeExportName('x'.repeat(500), 'csv')).toHaveLength(84);
   });
 });
 

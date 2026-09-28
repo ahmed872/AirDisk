@@ -42,3 +42,24 @@ export const CONTENT_SECURITY_POLICY = [
 ].join('; ');
 
 export const IPC_CHANNEL = 'airdesk:invoke';
+
+export const EXPORT_CHANNEL = 'airdesk:export';
+export const MAX_EXPORT_TEXT = 10 * 1024 * 1024;
+
+/**
+ * Suggested file name for a user-confirmed export: no path separators, no
+ * reserved characters, bounded length, and the extension forced by the kind.
+ * The user still chooses the final location in a native save dialog.
+ */
+export function sanitizeExportName(name: unknown, ext: 'pdf' | 'csv'): string {
+  const base = typeof name === 'string' ? name : 'export';
+  const clean = [...base].filter((ch) => ch.charCodeAt(0) >= 32).join('') // no control characters
+    .replace(/\.[a-z0-9]{1,5}$/i, '')
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\.{2,}/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^\.+/, '')
+    .trim()
+    .slice(0, 80) || 'export';
+  return `${clean}.${ext}`;
+}

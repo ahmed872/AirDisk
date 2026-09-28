@@ -1,11 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { OPS, OPS_ERRORS, OPS_REASONS } from './i18n-ops';
 
 /**
  * Typed i18n. Every entry is an [Arabic, English] pair, so a key cannot exist
  * in one language only (compile-time guarantee — no screen ships with a missing
  * translation). Arabic is the primary language.
  */
-const dict = {
+const BASE = {
   appName: ['AirDesk', 'AirDesk'],
   loading: ['جارٍ التحميل…', 'Loading…'],
   language: ['English', 'العربية'],
@@ -247,8 +248,10 @@ const dict = {
   mod_other: ['أخرى', 'Other'],
 } as const satisfies Record<string, readonly [string, string]>;
 
+const dict = { ...BASE, ...OPS };
+
 /** Backend error codes. */
-const errors = {
+const errors0 = {
   INVALID_CREDENTIALS: ['اسم المستخدم أو كلمة المرور غير صحيحة', 'Incorrect username or password'],
   ACCOUNT_LOCKED: ['تم قفل الحساب مؤقتًا بسبب محاولات فاشلة متكررة', 'Account temporarily locked after repeated failed attempts'],
   ACCOUNT_DISABLED: ['هذا الحساب موقوف', 'This account is disabled'],
@@ -268,9 +271,10 @@ const errors = {
   PASSWORD_CHANGE_REQUIRED: ['يجب تغيير كلمة المرور أولًا', 'You must change your password first'],
   INTERNAL: ['حدث خطأ غير متوقع وتم تسجيله', 'An unexpected error occurred and was logged'],
 } as const satisfies Record<string, readonly [string, string]>;
+const errors = { ...errors0, ...OPS_ERRORS };
 
 /** Domain validation reasons (details.reason). */
-const reasons = {
+const reasons0 = {
   REQUIRED: ['حقل مطلوب', 'is required'],
   TOO_LONG: ['النص أطول من المسموح', 'is too long'],
   INVALID_PHONE: ['رقم هاتف غير صالح', 'is not a valid phone number'],
@@ -297,6 +301,7 @@ const reasons = {
   ADMIN_ROLE_FIXED: ['دور مدير النظام يملك كل الصلاحيات دائمًا', 'The Administrator role always holds every permission'],
   UNKNOWN_ROLE: ['دور غير معروف', 'is an unknown role'],
 } as const satisfies Record<string, readonly [string, string]>;
+const reasons = { ...reasons0, ...OPS_REASONS };
 
 /** Field names used in error details → labels. */
 const fields: Record<string, keyof typeof dict> = {
@@ -309,6 +314,12 @@ const fields: Record<string, keyof typeof dict> = {
   website: 'website', username: 'username', displayName: 'displayName', mobile: 'mobile', password: 'password',
   newPassword: 'newPassword', code: 'roleCode', legalNameAr: 'legalNameAr', legalNameEn: 'legalNameEn',
   defaultCountryCode: 'country', baseCurrencyCode: 'baseCurrency', timezone: 'timezone',
+  givenName: 'givenName', surname: 'surname', flightNumber: 'flightNumber', origin: 'origin', destination: 'destination',
+  departureDate: 'departureDate', departureTime: 'departureTime', arrivalDate: 'arrivalDate', arrivalTime: 'arrivalTime', pnr: 'pnr',
+  ticketNumber: 'ticketNumber', passengerId: 'passenger', supplierId: 'supplierSource', costCurrency: 'costCurrency', costMinor: 'purchaseCost',
+  fareMinor: 'fare', discountMinor: 'discount', amountMinor: 'amount', allocations: 'allocateTo', moneyAccountId: 'moneyAccount',
+  bookingClass: 'bookingClassLabel', contactName: 'contactName', contactMobile: 'contactMobile', reason: 'reason',
+  ticketIds: 'tickets', lines: 'tickets', frequentFlyerNo: 'frequentFlyer', iata: 'iataCode', accountCode: 'ledgerAccount',
 };
 
 export type Locale = 'ar' | 'en';

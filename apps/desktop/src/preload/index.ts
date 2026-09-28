@@ -7,4 +7,8 @@ import { contextBridge, ipcRenderer } from 'electron';
  */
 contextBridge.exposeInMainWorld('airdesk', {
   invoke: (command: string, payload?: unknown) => ipcRenderer.invoke('airdesk:invoke', command, payload ?? {}),
+  /** Saves the current view as PDF after the user picks a location (main process validates and audits). */
+  exportPdf: (fileName: string) => ipcRenderer.invoke('airdesk:export', 'pdf', fileName),
+  /** Saves CSV text after the user picks a location (requires report.export; audited). */
+  exportCsv: (fileName: string, content: string) => ipcRenderer.invoke('airdesk:export', 'csv', fileName, content),
 });

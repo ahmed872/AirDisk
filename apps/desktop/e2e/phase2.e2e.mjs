@@ -112,19 +112,19 @@ try {
     await win.waitForSelector('[role=alert]');
     await login('owner', ADMIN_PW);
     await win.waitForSelector('[data-testid=page-dashboard]');
-    await win.waitForSelector('[data-testid=tile-customers]');
+    await win.waitForSelector('[data-testid=tile-m_bookingsCreated]');
   });
 
   await step(5, 'arabic RTL shell', async () => {
     assert.equal(await dir(), 'rtl');
     assert.equal(await win.evaluate(() => document.documentElement.lang), 'ar');
     const labels = await win.locator('.sidebar button span:first-child').allTextContents();
-    for (const l of ['لوحة التحكم', 'العملاء', 'الموردون', 'شركات الطيران', 'الحجوزات والتذاكر', 'المستخدمون والصلاحيات', 'إعدادات الشركة', 'سجل التدقيق', 'النسخ الاحتياطي والاستعادة']) {
+    for (const l of ['لوحة التحكم', 'سجلات التذاكر', 'الرحلات القادمة', 'العملاء', 'الموردون', 'شركات الطيران', 'المدفوعات والمالية', 'التقارير وكشوف الحساب', 'المستخدمون والصلاحيات', 'إعدادات الشركة', 'سجل التدقيق', 'النسخ الاحتياطي والاستعادة']) {
       assert.ok(labels.includes(l), `nav ${l}`);
     }
-    await nav('bookings');
-    await win.waitForSelector('[data-testid=page-coming-soon]');
-    assert.equal(await win.locator('[data-testid=page-coming-soon] input, [data-testid=page-coming-soon] button').count(), 0, 'coming-soon pages have no fake functionality');
+    // Scope: AirDesk records externally booked tickets — there is no flight search or booking function anywhere.
+    const text = await win.evaluate(() => document.body.innerText);
+    for (const banned of ['Search flights', 'Book flight', 'بحث عن رحلات', 'احجز رحلة']) assert.ok(!text.includes(banned), banned);
   });
 
   await step(6, 'switch to English LTR', async () => {
@@ -306,7 +306,7 @@ try {
     await win.waitForSelector('[data-testid=login-username]');
     assert.equal((await invoke('system.status')).data.setupRequired, false);
     await login('owner', ADMIN_PW);
-    await win.waitForSelector('[data-testid=tile-customers]');
+    await win.waitForSelector('[data-testid=tile-m_bookingsCreated]');
     await nav('customers');
     await win.selectOption('[data-testid=status-filter]', 'ALL');
     await win.waitForSelector('[data-testid=results] [data-status=ARCHIVED]');

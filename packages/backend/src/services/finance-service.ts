@@ -410,6 +410,30 @@ export class FinanceService {
     return out.sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
   }
 
+  /**
+   * Open items of a party per record and currency (positive = they owe / we owe,
+   * negative = credit), plus the unallocated on-account balance. Derived from
+   * the journal; used to allocate payments precisely.
+   */
+  openItems(actor: Actor, party: 'CUSTOMER' | 'SUPPLIER', partyId: string): { bookingId: string | null; bookingNo: string | null; currency: string; openMinor: number; dueDate: string | null }[] {
+    requirePermission(this.deps, actor, party === 'CUSTOMER' ? ['payment.customer.receive', 'payment.customer.refund'] : ['payment.supplier.pay', 'payment.supplier.record_refund'], 'payments.openItems');
+    const account = party === 'CUSTOMER' ? '1200' : '2100';
+    const col = party === 'CUSTOMER' ? 'customer_id' : 'supplier_id';
+    const sign = party === 'CUSTOMER' ? 1 : -1;
+    const rows = this.deps.db
+      .prepare(`SELECT jl.booking_id, b.booking_no, jl.currency_code, SUM(jl.debit_minor - jl.credit_minor) AS bal, b.due_date
+                FROM journal_line jl LEFT JOIN booking b ON b.id = jl.booking_id
+                WHERE jl.account_code = ? AND jl.${col} = ? GROUP BY jl.booking_id, jl.currency_code HAVING bal <> 0
+                ORDER BY (jl.booking_id IS NULL), b.due_date, b.booking_no`)
+      .all(account, partyId) as { booking_id: string | null; booking_no: string | null; currency_code: string; bal: number; due_date: string | null }[];
+    return rows
+      .filter((r) => {
+        if (!r.booking_id || party === 'SUPPLIER') return true;
+        try { this.bookings.accessible(actor, r.booking_id); return true; } catch { return false; }
+      })
+      .map((r) => ({ bookingId: r.booking_id, bookingNo: r.booking_no, currency: r.currency_code, openMinor: sign * r.bal, dueDate: r.due_date }));
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────
   private request(actor: Actor, id: string, rowVersion: number): CancellationRow {
     const r = this.deps.db.prepare('SELECT * FROM cancellation_request WHERE id = ?').get(id) as CancellationRow | undefined;

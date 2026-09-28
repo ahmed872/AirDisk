@@ -352,6 +352,7 @@ export const commandSchemas = {
   'payments.refundCustomer': paymentInput,
   'payments.paySupplier': paymentInput,
   'payments.supplierRefund': paymentInput,
+  'payments.openItems': z.object({ party: z.enum(['CUSTOMER', 'SUPPLIER']), partyId: ulid }).strict(),
   'documents.get': idOnly,
   'documents.cancel': z.object({ id: ulid, reason: text(500), date: isoDate.optional().nullable() }).strict(),
 
