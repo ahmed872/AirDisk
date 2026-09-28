@@ -1,6 +1,6 @@
 import { ZodError } from 'zod';
 import { DomainError, ErrorCode, isDomainError } from '@airdesk/domain';
-import { commandSchemas, type AuditEntryDto, type CommandError, type CommandName, type CommandResult, type SystemStatusDto } from '@airdesk/contracts';
+import { commandSchemas, type AuditEntryDto, type CommandError, type CommandName, type CommandResult, type DashboardSummaryDto, type SystemStatusDto } from '@airdesk/contracts';
 import { requirePermission, type Actor } from '../services/context';
 import type { AppBackend } from './backend';
 
@@ -83,7 +83,11 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
   },
 
   'company.get': { access: AUTH, run: (ctx) => ctx.backend.svc.company.get() },
-  'company.update': { access: perm('settings.company'), run: (ctx, i) => ctx.backend.svc.company.update(actor(ctx), i.profile, i.rowVersion) },
+  // Field-group permissions (company.edit / company.branding / company.financial_config) are enforced by the service.
+  'company.update': {
+    access: perm('company.edit', 'company.branding', 'company.financial_config'),
+    run: (ctx, i) => ctx.backend.svc.company.update(actor(ctx), i.profile, i.rowVersion),
+  },
   'company.setLockDate': {
     access: perm('finance.lock_period', 'finance.unlock_period'),
     run: (ctx, i) => ctx.backend.svc.company.setLockDate(actor(ctx), i.lockDate, i.reason),
@@ -92,16 +96,79 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
   'currency.list': { access: AUTH, run: (ctx) => ctx.backend.svc.currencies.list() },
   'currency.setRate': { access: perm('finance.exchange_rates'), run: (ctx, i) => ctx.backend.svc.currencies.setRate(actor(ctx), i) },
 
-  'users.list': { access: perm('user.manage'), run: (ctx) => ctx.backend.svc.users.listUsers(actor(ctx)) },
-  'users.create': { access: perm('user.manage'), run: (ctx, i) => ctx.backend.svc.users.createUser(actor(ctx), i) },
-  'users.setRoles': { access: perm('user.manage'), run: (ctx, i) => ctx.backend.svc.users.setUserRoles(actor(ctx), i.userId, i.roleCodes) },
-  'users.setActive': { access: perm('user.manage'), run: (ctx, i) => ctx.backend.svc.users.setUserActive(actor(ctx), i.userId, i.active) },
-  'users.resetPassword': { access: perm('user.manage'), run: (ctx, i) => ctx.backend.svc.users.resetPassword(actor(ctx), i.userId, i.newPassword) },
+  'users.list': { access: perm('user.view'), run: (ctx, i) => ctx.backend.svc.users.listUsers(actor(ctx), i) },
+  'users.create': { access: perm('user.create'), run: (ctx, i) => ctx.backend.svc.users.createUser(actor(ctx), i) },
+  'users.update': { access: perm('user.edit'), run: (ctx, i) => ctx.backend.svc.users.updateUser(actor(ctx), i) },
+  'users.setRoles': { access: perm('user.assign_roles'), run: (ctx, i) => ctx.backend.svc.users.setUserRoles(actor(ctx), i.userId, i.roleCodes) },
+  'users.setActive': { access: perm('user.disable'), run: (ctx, i) => ctx.backend.svc.users.setUserActive(actor(ctx), i.userId, i.active) },
+  'users.resetPassword': { access: perm('user.reset_credentials'), run: (ctx, i) => ctx.backend.svc.users.resetPassword(actor(ctx), i.userId, i.newPassword) },
+  'users.unlock': { access: perm('user.reset_credentials'), run: (ctx, i) => ctx.backend.svc.users.unlockUser(actor(ctx), i.userId) },
 
-  'roles.list': { access: perm('user.manage', 'role.manage'), run: (ctx) => ctx.backend.svc.users.listRoles(actor(ctx)) },
-  'roles.create': { access: perm('role.manage'), run: (ctx, i) => ctx.backend.svc.users.createRole(actor(ctx), i) },
-  'roles.setPermissions': { access: perm('role.manage'), run: (ctx, i) => ctx.backend.svc.users.setRolePermissions(actor(ctx), i.roleId, i.permissions) },
-  'permissions.list': { access: perm('user.manage', 'role.manage'), run: (ctx) => ctx.backend.svc.users.listPermissions(actor(ctx)) },
+  'roles.list': { access: perm('role.view', 'user.assign_roles'), run: (ctx) => ctx.backend.svc.users.listRoles(actor(ctx)) },
+  'roles.create': { access: perm('role.create'), run: (ctx, i) => ctx.backend.svc.users.createRole(actor(ctx), i) },
+  'roles.update': { access: perm('role.edit'), run: (ctx, i) => ctx.backend.svc.users.updateRole(actor(ctx), i) },
+  'roles.setPermissions': { access: perm('role.manage_permissions'), run: (ctx, i) => ctx.backend.svc.users.setRolePermissions(actor(ctx), i.roleId, i.permissions) },
+  'permissions.list': { access: perm('role.view', 'user.assign_roles'), run: (ctx) => ctx.backend.svc.users.listPermissions(actor(ctx)) },
+
+  'customers.list': { access: perm('customer.view'), run: (ctx, i) => ctx.backend.svc.customers.list(actor(ctx), i) },
+  'customers.get': { access: perm('customer.view'), run: (ctx, i) => ctx.backend.svc.customers.get(actor(ctx), i.id) },
+  'customers.checkDuplicates': {
+    access: perm('customer.view', 'customer.create', 'customer.edit'),
+    run: (ctx, i) => ctx.backend.svc.customers.checkDuplicates(actor(ctx), i.customer, i.excludeId),
+  },
+  'customers.create': { access: perm('customer.create'), run: (ctx, i) => ctx.backend.svc.customers.create(actor(ctx), i.customer, i.confirmDuplicates) },
+  'customers.update': {
+    access: perm('customer.edit'),
+    run: (ctx, i) => ctx.backend.svc.customers.update(actor(ctx), i.id, i.customer, i.rowVersion, i.confirmDuplicates),
+  },
+  'customers.archive': { access: perm('customer.archive'), run: (ctx, i) => ctx.backend.svc.customers.setStatus(actor(ctx), i.id, 'ARCHIVED', i.reason) },
+  'customers.restore': { access: perm('customer.archive'), run: (ctx, i) => ctx.backend.svc.customers.setStatus(actor(ctx), i.id, 'ACTIVE', i.reason) },
+
+  'suppliers.list': { access: perm('supplier.view'), run: (ctx, i) => ctx.backend.svc.suppliers.list(actor(ctx), i) },
+  'suppliers.get': { access: perm('supplier.view'), run: (ctx, i) => ctx.backend.svc.suppliers.get(actor(ctx), i.id) },
+  'suppliers.create': { access: perm('supplier.create'), run: (ctx, i) => ctx.backend.svc.suppliers.create(actor(ctx), i.supplier, i.confirmDuplicates) },
+  'suppliers.update': {
+    access: perm('supplier.edit'),
+    run: (ctx, i) => ctx.backend.svc.suppliers.update(actor(ctx), i.id, i.supplier, i.rowVersion, i.confirmDuplicates),
+  },
+  'suppliers.archive': { access: perm('supplier.archive'), run: (ctx, i) => ctx.backend.svc.suppliers.setStatus(actor(ctx), i.id, 'ARCHIVED', i.reason) },
+  'suppliers.restore': { access: perm('supplier.archive'), run: (ctx, i) => ctx.backend.svc.suppliers.setStatus(actor(ctx), i.id, 'ACTIVE', i.reason) },
+
+  'airlines.list': { access: perm('airline.view'), run: (ctx, i) => ctx.backend.svc.airlines.list(actor(ctx), i) },
+  'airlines.get': { access: perm('airline.view'), run: (ctx, i) => ctx.backend.svc.airlines.get(actor(ctx), i.id) },
+  'airlines.create': { access: perm('airline.create'), run: (ctx, i) => ctx.backend.svc.airlines.create(actor(ctx), i.airline, i.confirmDuplicates) },
+  'airlines.update': {
+    access: perm('airline.edit'),
+    run: (ctx, i) => ctx.backend.svc.airlines.update(actor(ctx), i.id, i.airline, i.rowVersion, i.confirmDuplicates),
+  },
+  'airlines.archive': { access: perm('airline.archive'), run: (ctx, i) => ctx.backend.svc.airlines.setStatus(actor(ctx), i.id, 'ARCHIVED', i.reason) },
+  'airlines.restore': { access: perm('airline.archive'), run: (ctx, i) => ctx.backend.svc.airlines.setStatus(actor(ctx), i.id, 'ACTIVE', i.reason) },
+
+  'dashboard.summary': {
+    access: perm('dashboard.operational', 'dashboard.financial'),
+    run: (ctx): DashboardSummaryDto => {
+      const db = ctx.backend.svc.deps.db;
+      const a = actor(ctx);
+      const counts = (table: string) =>
+        db.prepare(`SELECT SUM(is_active = 1) AS active, SUM(is_active = 0) AS archived FROM ${table}`).get() as { active: number | null; archived: number | null };
+      const pair = (table: string, perm: string) => {
+        if (!a.permissions.has(perm)) return null;
+        const c = counts(table);
+        return { active: c.active ?? 0, archived: c.archived ?? 0 };
+      };
+      const users = a.permissions.has('user.view') ? counts('app_user') : null;
+      const lastBackup = a.permissions.has('backup.create')
+        ? ((db.prepare(`SELECT MAX(finished_at) AS t FROM backup_record WHERE status = 'SUCCEEDED'`).get() as { t: string | null }).t)
+        : null;
+      return {
+        customers: pair('customer', 'customer.view'),
+        suppliers: pair('supplier', 'supplier.view'),
+        airlines: pair('airline', 'airline.view'),
+        users: users ? { active: users.active ?? 0, disabled: users.archived ?? 0 } : null,
+        lastBackupAt: lastBackup,
+      };
+    },
+  },
 
   'ledger.summary': { access: perm('report.profit'), run: (ctx, i) => ctx.backend.svc.ledger.summary(actor(ctx), i.from, i.to) },
   'ledger.trialBalance': { access: perm('report.profit'), run: (ctx, i) => ctx.backend.svc.ledger.trialBalance(actor(ctx), i.asOf) },
@@ -127,18 +194,33 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
   'audit.list': {
     access: perm('audit.view'),
     run: (ctx, i): AuditEntryDto[] => {
+      const where: string[] = [];
+      const params: unknown[] = [];
+      const add = (cond: string, v: unknown) => {
+        where.push(cond);
+        params.push(v);
+      };
+      if (i.beforeSeq) add('a.seq < ?', i.beforeSeq);
+      if (i.entityType) add('a.entity_type = ?', i.entityType);
+      if (i.entityId) add('a.entity_id = ?', i.entityId);
+      if (i.action) add(`a.action LIKE ? ESCAPE '\\'`, `${i.action.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+      if (i.userId) add('a.user_id = ?', i.userId);
+      if (i.from) add('a.occurred_at >= ?', `${i.from}T00:00:00.000Z`);
+      if (i.to) add('a.occurred_at <= ?', `${i.to}T23:59:59.999Z`);
       const rows = ctx.backend.svc.deps.db
         .prepare(
-          `SELECT a.seq, a.occurred_at, a.user_id, u.username, a.action, a.entity_type, a.entity_id, a.metadata_json
+          `SELECT a.seq, a.occurred_at, a.user_id, u.username, a.workstation, a.action, a.entity_type, a.entity_id, a.before_json, a.after_json, a.metadata_json
            FROM audit_log a LEFT JOIN app_user u ON u.id = a.user_id
-           WHERE (? IS NULL OR a.seq < ?) ORDER BY a.seq DESC LIMIT ?`,
+           ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY a.seq DESC LIMIT ?`,
         )
-        .all(i.beforeSeq ?? null, i.beforeSeq ?? null, i.limit) as {
-          seq: number; occurred_at: string; user_id: string | null; username: string | null; action: string; entity_type: string; entity_id: string | null; metadata_json: string | null;
+        .all(...params, i.limit) as {
+          seq: number; occurred_at: string; user_id: string | null; username: string | null; workstation: string | null; action: string;
+          entity_type: string; entity_id: string | null; before_json: string | null; after_json: string | null; metadata_json: string | null;
         }[];
+      const parse = (j: string | null) => (j ? JSON.parse(j) : null);
       return rows.map((r) => ({
-        seq: r.seq, occurredAt: r.occurred_at, userId: r.user_id, username: r.username, action: r.action,
-        entityType: r.entity_type, entityId: r.entity_id, metadata: r.metadata_json ? JSON.parse(r.metadata_json) : null,
+        seq: r.seq, occurredAt: r.occurred_at, userId: r.user_id, username: r.username, workstation: r.workstation, action: r.action,
+        entityType: r.entity_type, entityId: r.entity_id, before: parse(r.before_json), after: parse(r.after_json), metadata: parse(r.metadata_json),
       }));
     },
   },

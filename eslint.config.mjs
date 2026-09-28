@@ -20,9 +20,20 @@ export default tseslint.config(
     },
   },
   {
-    // These files compose SQL from fixed, internal fragments only (table names,
-    // account-class filters) — never from user input. Values are still bound.
-    files: ['**/test/**/*.ts', 'packages/backend/src/services/posting-service.ts', 'packages/backend/src/services/ledger-query-service.ts'],
+    // These files compose SQL from fixed, internal fragments only (table/column
+    // literals, whitelisted sort columns, generated `?` placeholder lists, WHERE
+    // clauses built from constant strings) — never from user input. Every value
+    // is still a bound parameter; user search text only reaches FTS via `MATCH ?`.
+    files: [
+      '**/test/**/*.ts',
+      'packages/backend/src/services/posting-service.ts',
+      'packages/backend/src/services/ledger-query-service.ts',
+      'packages/backend/src/services/customer-service.ts',
+      'packages/backend/src/services/supplier-service.ts',
+      'packages/backend/src/services/airline-service.ts',
+      'packages/backend/src/app/dispatcher.ts',
+      'packages/backend/src/app/backend.ts',
+    ],
     rules: { 'no-restricted-syntax': 'off' },
   },
   {

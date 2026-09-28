@@ -34,9 +34,10 @@ describe('migration runner', () => {
   it('builds the full schema from an empty file and records version + checksum', () => {
     const db = fresh();
     const plan = runMigrations(db, MIGRATIONS, { appVersion: 't', now });
-    expect(plan.pending.map((m) => m.version)).toEqual([1]);
-    expect(schemaVersion(db)).toBe(1);
-    expect(db.pragma('user_version', { simple: true })).toBe(1);
+    const head = MIGRATIONS.length;
+    expect(plan.pending.map((m) => m.version)).toEqual(MIGRATIONS.map((m) => m.version));
+    expect(schemaVersion(db)).toBe(head);
+    expect(db.pragma('user_version', { simple: true })).toBe(head);
     const row = db.prepare('SELECT checksum FROM schema_migration WHERE version = 1').get() as { checksum: string };
     expect(row.checksum).toBe(migrationChecksum(MIGRATIONS[0]!.sql));
     const tables = (db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table','view')`).all() as { name: string }[]).map((t) => t.name);
@@ -64,8 +65,8 @@ describe('migration runner', () => {
 
   it('refuses to open a database created by a newer version (downgrade protection)', () => {
     const db = fresh();
-    const v2: Migration[] = [...MIGRATIONS, { version: 2, name: 'future', sql: 'CREATE TABLE future_thing (id TEXT PRIMARY KEY) STRICT;' }];
-    runMigrations(db, v2, { appVersion: 't', now });
+    const newer: Migration[] = [...MIGRATIONS, { version: MIGRATIONS.length + 1, name: 'future', sql: 'CREATE TABLE future_thing (id TEXT PRIMARY KEY) STRICT;' }];
+    runMigrations(db, newer, { appVersion: 't', now });
     expect(codeOf(() => planMigrations(db, MIGRATIONS))).toBe(ErrorCode.DATABASE_TOO_NEW);
     db.close();
   });
@@ -75,10 +76,10 @@ describe('migration runner', () => {
     runMigrations(db, MIGRATIONS, { appVersion: 't', now });
     const broken: Migration[] = [
       ...MIGRATIONS,
-      { version: 2, name: 'half', sql: 'CREATE TABLE new_table (id TEXT PRIMARY KEY) STRICT; INSERT INTO no_such_table VALUES (1);' },
+      { version: MIGRATIONS.length + 1, name: 'half', sql: 'CREATE TABLE new_table (id TEXT PRIMARY KEY) STRICT; INSERT INTO no_such_table VALUES (1);' },
     ];
     expect(() => runMigrations(db, broken, { appVersion: 't', now })).toThrow();
-    expect(schemaVersion(db)).toBe(1);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
     expect(db.prepare(`SELECT 1 FROM sqlite_master WHERE name = 'new_table'`).get()).toBeUndefined();
     db.close();
   });
@@ -142,13 +143,14 @@ describe('startup upgrade path', () => {
     await setupCompany(v1);
     v1.backend.close();
 
-    const v2: Migration[] = [...MIGRATIONS, { version: 2, name: 'add_note', sql: 'ALTER TABLE customer ADD COLUMN loyalty_tier TEXT;' }];
-    const upgraded = await makeBackend({ dataDir, migrations: v2 });
-    expect(upgraded.backend.schemaVersionNow).toBe(2);
+    const next = MIGRATIONS.length + 1;
+    const vNext: Migration[] = [...MIGRATIONS, { version: next, name: 'add_note', sql: 'ALTER TABLE customer ADD COLUMN loyalty_tier TEXT;' }];
+    const upgraded = await makeBackend({ dataDir, migrations: vNext });
+    expect(upgraded.backend.schemaVersionNow).toBe(next);
     const backups = readdirSync(join(dataDir, 'backups')).filter((f) => f.endsWith('.adbk'));
     expect(backups.some((f) => f.includes('pre_migration'))).toBe(true);
-    const validated = validateBackupFile(join(dataDir, 'backups', backups[0]!), { maxSchemaVersion: 2, tempDir: dataDir });
-    expect(validated.manifest.schemaVersion).toBe(1);
+    const validated = validateBackupFile(join(dataDir, 'backups', backups[0]!), { maxSchemaVersion: next, tempDir: dataDir });
+    expect(validated.manifest.schemaVersion).toBe(MIGRATIONS.length);
     expect(existsSync(join(dataDir, 'backup-history.jsonl'))).toBe(true);
   });
 });

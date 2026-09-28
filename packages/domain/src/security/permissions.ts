@@ -22,10 +22,15 @@ const p = (code: string, sensitive: boolean, ar: string, en: string): Permission
 });
 
 export const PERMISSIONS: readonly PermissionDefinition[] = [
+  p('company.view', false, 'عرض بيانات الشركة', 'View company'),
+  p('company.edit', true, 'تعديل بيانات الشركة', 'Edit company'),
+  p('company.branding', true, 'إدارة الهوية والشعار', 'Manage branding'),
+  p('company.financial_config', true, 'الإعدادات المالية والضريبية للشركة', 'Manage financial configuration'),
+
   p('customer.view', false, 'عرض العملاء', 'View customers'),
   p('customer.create', false, 'إضافة عملاء', 'Create customers'),
   p('customer.edit', false, 'تعديل العملاء', 'Edit customers'),
-  p('customer.deactivate', false, 'إيقاف العملاء', 'Deactivate customers'),
+  p('customer.archive', false, 'أرشفة العملاء واستعادتهم', 'Archive customers'),
   p('customer.view_identity', true, 'عرض بيانات الهوية والجواز', 'View identity/passport data'),
 
   p('booking.view', false, 'عرض الحجوزات', 'View bookings'),
@@ -56,8 +61,10 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   p('balance.apply', true, 'تسوية الأرصدة بين الحجوزات', 'Apply balances'),
 
   p('supplier.view', false, 'عرض الموردين', 'View suppliers'),
-  p('supplier.manage', false, 'إدارة الموردين', 'Manage suppliers'),
-  p('supplier.view_balance', true, 'عرض أرصدة الموردين', 'View supplier balances'),
+  p('supplier.create', false, 'إضافة موردين', 'Create suppliers'),
+  p('supplier.edit', false, 'تعديل الموردين', 'Edit suppliers'),
+  p('supplier.archive', false, 'أرشفة الموردين واستعادتهم', 'Archive suppliers'),
+  p('supplier.view_financial', true, 'عرض البيانات المالية للموردين', 'View supplier financial information'),
   p('payment.supplier.pay', true, 'الدفع للموردين', 'Pay suppliers'),
   p('payment.supplier.reverse', true, 'عكس دفعات الموردين', 'Reverse supplier payments'),
   p('payment.supplier.record_refund', true, 'تسجيل استرداد من المورد', 'Record supplier refunds'),
@@ -99,13 +106,23 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   p('report.employee_activity', true, 'نشاط الموظفين', 'Employee activity'),
   p('report.export', true, 'تصدير التقارير', 'Export reports'),
 
-  p('airline.manage', false, 'إدارة شركات الطيران', 'Manage airlines'),
+  p('airline.view', false, 'عرض شركات الطيران', 'View airlines'),
+  p('airline.create', false, 'إضافة شركات طيران', 'Create airlines'),
+  p('airline.edit', false, 'تعديل شركات الطيران', 'Edit airlines'),
+  p('airline.archive', false, 'أرشفة شركات الطيران واستعادتها', 'Archive airlines'),
   p('airport.manage', false, 'إدارة المطارات', 'Manage airports'),
   p('template.manage', false, 'إدارة قوالب الرسائل', 'Manage message templates'),
 
-  p('user.manage', true, 'إدارة المستخدمين', 'Manage users'),
-  p('role.manage', true, 'إدارة الأدوار والصلاحيات', 'Manage roles'),
-  p('settings.company', true, 'إعدادات الشركة', 'Company settings'),
+  p('user.view', true, 'عرض المستخدمين', 'View users'),
+  p('user.create', true, 'إضافة مستخدمين', 'Create users'),
+  p('user.edit', true, 'تعديل المستخدمين', 'Edit users'),
+  p('user.disable', true, 'إيقاف وتفعيل المستخدمين', 'Disable/enable users'),
+  p('user.reset_credentials', true, 'إعادة تعيين كلمات المرور وفك القفل', 'Reset credentials'),
+  p('user.assign_roles', true, 'إسناد الأدوار للمستخدمين', 'Assign roles to users'),
+  p('role.view', true, 'عرض الأدوار', 'View roles'),
+  p('role.create', true, 'إنشاء أدوار', 'Create roles'),
+  p('role.edit', true, 'تعديل الأدوار', 'Edit roles'),
+  p('role.manage_permissions', true, 'إدارة صلاحيات الأدوار', 'Manage role permissions'),
   p('settings.system', true, 'إعدادات النظام', 'System settings'),
   p('audit.view', true, 'سجل التدقيق', 'View audit log'),
   p('backup.create', true, 'إنشاء نسخة احتياطية', 'Create backups'),
@@ -129,19 +146,21 @@ export const SYSTEM_ROLES: ReadonlyArray<{ code: string; nameAr: string; nameEn:
     nameAr: 'مدير',
     nameEn: 'Manager',
     permissions: [
-      'customer.view', 'customer.create', 'customer.edit', 'customer.deactivate', 'customer.view_identity',
+      'company.view',
+      'customer.view', 'customer.create', 'customer.edit', 'customer.archive', 'customer.view_identity',
       'booking.view', 'booking.view_all', 'booking.create', 'booking.edit', 'booking.reserve', 'booking.issue', 'booking.discard',
       'booking.enter_cost', 'booking.view_cost', 'booking.view_profit', 'booking.adjust_price', 'booking.change_supplier',
       'booking.sell_below_cost', 'booking.zero_price', 'booking.reissue', 'booking.void',
       'schedule.change', 'schedule.notify', 'schedule.confirm',
       'payment.customer.receive', 'payment.customer.reverse', 'payment.customer.refund', 'payment.accept_overpayment', 'balance.apply',
-      'supplier.view', 'supplier.view_balance',
+      'supplier.view', 'supplier.view_financial',
       'refund.request', 'refund.manage', 'refund.customer_before_supplier',
       'expense.view', 'treasury.view',
       'dashboard.operational', 'dashboard.financial',
       'report.sales', 'report.purchases', 'report.profit', 'report.receivables', 'report.payables', 'report.supplier_performance',
       'report.statements', 'report.expenses', 'report.refunds', 'report.schedule_changes', 'report.employee_activity', 'report.export',
-      'airline.manage', 'airport.manage', 'template.manage',
+      'airline.view', 'airline.create', 'airline.edit', 'airline.archive', 'airport.manage', 'template.manage',
+      'user.view', 'role.view',
       'audit.view', 'backup.create', 'integrity.run',
     ],
   },
@@ -150,9 +169,10 @@ export const SYSTEM_ROLES: ReadonlyArray<{ code: string; nameAr: string; nameEn:
     nameAr: 'محاسب',
     nameEn: 'Accountant',
     permissions: [
-      'customer.view', 'booking.view', 'booking.view_all', 'booking.enter_cost', 'booking.view_cost', 'booking.view_profit',
+      'company.view', 'customer.view', 'airline.view',
+      'booking.view', 'booking.view_all', 'booking.enter_cost', 'booking.view_cost', 'booking.view_profit',
       'payment.customer.receive', 'payment.customer.reverse', 'payment.customer.refund', 'payment.accept_overpayment', 'balance.apply',
-      'supplier.view', 'supplier.manage', 'supplier.view_balance',
+      'supplier.view', 'supplier.create', 'supplier.edit', 'supplier.archive', 'supplier.view_financial',
       'payment.supplier.pay', 'payment.supplier.reverse', 'payment.supplier.record_refund',
       'refund.request', 'refund.manage',
       'expense.view', 'expense.create', 'expense.reverse', 'expense.category.manage',
@@ -169,17 +189,33 @@ export const SYSTEM_ROLES: ReadonlyArray<{ code: string; nameAr: string; nameEn:
     nameAr: 'موظف مبيعات',
     nameEn: 'Sales agent',
     permissions: [
-      'customer.view', 'customer.create', 'customer.edit', 'customer.view_identity',
+      'company.view', 'customer.view', 'customer.create', 'customer.edit', 'customer.view_identity',
       'booking.view', 'booking.create', 'booking.edit', 'booking.reserve', 'booking.issue', 'booking.discard', 'booking.enter_cost',
       'schedule.change', 'schedule.notify', 'schedule.confirm',
       'payment.customer.receive',
-      'supplier.view',
+      'supplier.view', 'airline.view',
       'refund.request',
       'dashboard.operational',
       'report.sales', 'report.statements', 'report.schedule_changes',
     ],
   },
 ];
+
+/**
+ * Permission codes replaced by finer-grained ones in a later version. On
+ * upgrade the seeder grants the replacements to every role that held the old
+ * code, then removes the old code — so no installation silently loses access.
+ * Entries are never removed from this map.
+ */
+export const PERMISSION_RENAMES: Readonly<Record<string, readonly string[]>> = {
+  'customer.deactivate': ['customer.archive'],
+  'supplier.manage': ['supplier.create', 'supplier.edit', 'supplier.archive'],
+  'supplier.view_balance': ['supplier.view_financial'],
+  'airline.manage': ['airline.view', 'airline.create', 'airline.edit', 'airline.archive'],
+  'user.manage': ['user.view', 'user.create', 'user.edit', 'user.disable', 'user.reset_credentials', 'user.assign_roles'],
+  'role.manage': ['role.view', 'role.create', 'role.edit', 'role.manage_permissions'],
+  'settings.company': ['company.edit', 'company.branding', 'company.financial_config'],
+};
 
 export function defaultPermissionsForRole(roleCode: string): readonly string[] {
   const role = SYSTEM_ROLES.find((r) => r.code === roleCode);

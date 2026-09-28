@@ -28,6 +28,9 @@ import { PostingService } from '../services/posting-service';
 import { SessionManager } from '../services/session-manager';
 import { readSetting } from '../services/settings';
 import { UserService } from '../services/user-service';
+import { CustomerService } from '../services/customer-service';
+import { SupplierService } from '../services/supplier-service';
+import { AirlineService } from '../services/airline-service';
 import { systemClock, type Clock } from '../util/clock';
 import { createUlidGenerator, type IdGenerator } from '../util/ids';
 import { consoleLogger, type Logger } from '../util/logger';
@@ -52,6 +55,9 @@ export interface Services {
   posting: PostingService;
   ledger: LedgerQueryService;
   sessions: SessionManager;
+  customers: CustomerService;
+  suppliers: SupplierService;
+  airlines: AirlineService;
 }
 
 export const DB_FILE_NAME = 'airdesk.db';
@@ -148,6 +154,7 @@ export class AppBackend {
     runMigrations(this.db, this.opts.migrations, { appVersion: this.opts.appVersion, now: () => this.opts.clock.now().toISOString() });
     seedSystemData(this.db, { newId: this.newId, now: this.opts.clock.now().toISOString(), appVersion: this.opts.appVersion });
     this.services = this.buildServices(this.db);
+    this.ensureSearchIndex();
     const abandoned = this.services.sessions.recoverAbandoned();
     if (abandoned) logger.warn('Closed sessions left open by an unclean shutdown', { count: abandoned });
     this.lastStartupIntegrity = runIntegrityChecks(this.db, this.services.deps.audit, this.opts.clock, { quick: true });
@@ -169,12 +176,40 @@ export class AppBackend {
       deps,
       company,
       auth: new AuthService(deps, hasher, sessions, company),
-      users: new UserService(deps, hasher, sessions),
+      users: new UserService(deps, hasher, sessions, company),
       currencies,
       posting: new PostingService(deps, company, currencies),
       ledger: new LedgerQueryService(deps, company),
       sessions,
+      customers: new CustomerService(deps, company),
+      suppliers: new SupplierService(deps, company),
+      airlines: new AirlineService(deps, company),
     };
+  }
+
+  /**
+   * Rebuilds the search index for an entity type if it is out of step with
+   * its table (e.g. rows created before the index existed, or a restored
+   * backup). Cheap check at startup; the index is otherwise maintained in the
+   * same transaction as every write.
+   */
+  private ensureSearchIndex(): void {
+    const svc = this.services;
+    const types = [
+      ['customer', 'customer', (id: string) => svc.customers.reindex(id)],
+      ['supplier', 'supplier', (id: string) => svc.suppliers.reindex(id)],
+      ['airline', 'airline', (id: string) => svc.airlines.reindex(id)],
+    ] as const;
+    for (const [type, table, reindex] of types) {
+      const rows = (this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+      const indexed = (this.db.prepare('SELECT COUNT(*) AS n FROM search_index WHERE entity_type = ?').get(type) as { n: number }).n;
+      if (rows === indexed) continue;
+      this.db.transaction(() => {
+        this.db.prepare('DELETE FROM search_index WHERE entity_type = ?').run(type);
+        for (const { id } of this.db.prepare(`SELECT id FROM ${table}`).all() as { id: string }[]) reindex(id);
+      })();
+      this.opts.logger.info('Rebuilt search index', { type, rows });
+    }
   }
 
   // ---- system operations that need the database handle itself ----
@@ -268,6 +303,7 @@ export class AppBackend {
       this.db = openDatabase({ path: this.livePath, fileMustExist: true });
       seedSystemData(this.db, { newId: this.newId, now: this.opts.clock.now().toISOString(), appVersion: this.opts.appVersion });
       this.services = this.buildServices(this.db);
+      this.ensureSearchIndex();
     }
     this.services.deps.audit.append(SYSTEM_ACTOR, {
       action: 'backup.restored',

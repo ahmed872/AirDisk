@@ -99,15 +99,22 @@ describe('authorization is enforced in the backend (Case M)', () => {
     expect(!bogus.ok && bogus.error.code).toBe(ErrorCode.VALIDATION);
   });
 
-  it('the Administrator role cannot be stripped, and the last active admin is protected', async () => {
+  it('the Administrator role cannot be stripped; admins cannot lock themselves out; the last active admin is protected', async () => {
     const { env, adminSession, admin } = await ready();
     const roles = await env.call<{ id: string; code: string }[]>('roles.list', {}, adminSession);
     const adminRole = roles.data!.find((r) => r.code === 'ADMIN')!;
     const strip = await env.call('roles.setPermissions', { roleId: adminRole.id, permissions: [] }, adminSession);
     expect(!strip.ok && strip.error.code).toBe(ErrorCode.VALIDATION);
+    // Self-protection (Phase 2 §6): nobody disables themselves or removes their own ADMIN role.
     const disableSelf = await env.call('users.setActive', { userId: admin.userId, active: false }, adminSession);
-    expect(!disableSelf.ok && disableSelf.error.code).toBe(ErrorCode.LAST_ADMIN);
+    expect(!disableSelf.ok && disableSelf.error.details?.reason).toBe('SELF_LOCKOUT');
     const demoteSelf = await env.call('users.setRoles', { userId: admin.userId, roleCodes: ['MANAGER'] }, adminSession);
-    expect(!demoteSelf.ok && demoteSelf.error.code).toBe(ErrorCode.LAST_ADMIN);
+    expect(!demoteSelf.ok && demoteSelf.error.details?.reason).toBe('SELF_LOCKOUT');
+    // Last-admin rule: a non-admin user manager cannot disable the only active admin.
+    await env.call('roles.create', { code: 'USER_ADMIN', nameAr: 'مسؤول مستخدمين', nameEn: 'User admin', permissions: ['user.view', 'user.disable'] }, adminSession);
+    const userAdmin = await userWithRoles(env, adminSession, 'useradmin', ['USER_ADMIN']);
+    const lastAdmin = await env.call('users.setActive', { userId: admin.userId, active: false }, userAdmin);
+    expect(!lastAdmin.ok && lastAdmin.error.code).toBe(ErrorCode.LAST_ADMIN);
+    expect((await env.call('company.get', {}, adminSession)).ok).toBe(true);
   });
 });

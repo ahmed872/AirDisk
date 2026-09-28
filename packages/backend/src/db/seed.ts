@@ -3,6 +3,7 @@ import {
   DomainError,
   ErrorCode,
   PERMISSIONS,
+  PERMISSION_RENAMES,
   SEED_CURRENCIES,
   SEED_EXPENSE_CATEGORIES,
   SYSTEM_ACCOUNTS,
@@ -20,6 +21,7 @@ import type { Db } from './driver';
  *    class/side/dimension drifted is an integrity failure, never "fixed";
  *  - permissions: upserted; newly introduced permissions are granted to the
  *    system roles whose defaults include them (existing custom edits kept);
+ *    superseded codes are migrated through PERMISSION_RENAMES, then removed;
  *  - ADMIN always holds every permission (owner decision Q5: full access).
  */
 export function seedSystemData(db: Db, opts: { newId: IdGenerator; now: string; appVersion: string }): void {
@@ -62,6 +64,25 @@ export function seedSystemData(db: Db, opts: { newId: IdGenerator; now: string; 
     );
     for (const perm of PERMISSIONS) upsertPerm.run(perm.code, perm.module, perm.sensitive ? 1 : 0, perm.ar, perm.en);
     const newlyAdded = new Set([...ALL_PERMISSION_CODES].filter((c) => !existingPerms.has(c)));
+
+    // Superseded codes: every role that held an old code receives all of its
+    // replacements, then the old code disappears. Nobody silently loses access.
+    const holders = db.prepare('SELECT role_id FROM role_permission WHERE permission_code = ?');
+    const grantRename = db.prepare('INSERT OR IGNORE INTO role_permission (role_id, permission_code) VALUES (?, ?)');
+    for (const [oldCode, replacements] of Object.entries(PERMISSION_RENAMES)) {
+      if (!existingPerms.has(oldCode)) continue;
+      for (const { role_id } of holders.all(oldCode) as { role_id: string }[]) {
+        for (const r of replacements) grantRename.run(role_id, r);
+      }
+    }
+    // Drop anything no longer in the catalogue (renamed or retired codes).
+    const obsolete = [...existingPerms].filter((c) => !ALL_PERMISSION_CODES.has(c));
+    const delGrants = db.prepare('DELETE FROM role_permission WHERE permission_code = ?');
+    const delPerm = db.prepare('DELETE FROM permission WHERE code = ?');
+    for (const c of obsolete) {
+      delGrants.run(c);
+      delPerm.run(c);
+    }
 
     const getRole = db.prepare('SELECT id FROM role WHERE code = ?');
     const insRole = db.prepare('INSERT INTO role (id, code, name_ar, name_en, is_system, created_at) VALUES (?, ?, ?, ?, 1, ?)');

@@ -1,4 +1,14 @@
-import { DomainError, ErrorCode, businessDate, classifyLockDateChange, isValidTimeZone } from '@airdesk/domain';
+import {
+  COMPANY_GROUP_PERMISSION,
+  DomainError,
+  ErrorCode,
+  assertCountryCode,
+  businessDate,
+  changedCompanyGroups,
+  classifyLockDateChange,
+  isValidTimeZone,
+  normalizeEmail,
+} from '@airdesk/domain';
 import type { CompanyProfileDto, CompanyProfileInput } from '@airdesk/contracts';
 import { actorOf, requirePermission, tx, type Actor, type ServiceDeps } from './context';
 
@@ -25,6 +35,13 @@ interface CompanyRow {
   financial_lock_date: string | null;
   document_footer_ar: string | null;
   document_footer_en: string | null;
+  invoice_title_ar: string | null;
+  invoice_title_en: string | null;
+  invoice_terms_ar: string | null;
+  invoice_terms_en: string | null;
+  date_format: CompanyProfileDto['dateFormat'];
+  number_format: CompanyProfileDto['numberFormat'];
+  text_direction: CompanyProfileDto['textDirection'];
   row_version: number;
 }
 
@@ -33,13 +50,16 @@ export interface CompanyCore {
   timezone: string;
   lockDate: string | null;
   legalNameAr: string;
+  defaultCountry: string;
 }
 
 const MAX_LOGO_BYTES = 512 * 1024;
 
 /**
- * White-label company profile (owner decision Q13). Nothing about the
- * operating company is hard-coded anywhere; everything comes from here.
+ * White-label company profile (owner decisions Q13 / Phase 2 §2). Nothing
+ * about the operating company is hard-coded; everything comes from here.
+ * Changes are authorised per field group: general (company.edit), branding
+ * (company.branding) and financial identity (company.financial_config).
  */
 export class CompanyService {
   constructor(private readonly deps: ServiceDeps) {}
@@ -50,10 +70,16 @@ export class CompanyService {
 
   core(): CompanyCore {
     const row = this.deps.db
-      .prepare('SELECT base_currency_code, timezone, financial_lock_date, legal_name_ar FROM company_profile WHERE id = 1')
-      .get() as { base_currency_code: string; timezone: string; financial_lock_date: string | null; legal_name_ar: string } | undefined;
+      .prepare('SELECT base_currency_code, timezone, financial_lock_date, legal_name_ar, default_country_code FROM company_profile WHERE id = 1')
+      .get() as { base_currency_code: string; timezone: string; financial_lock_date: string | null; legal_name_ar: string; default_country_code: string } | undefined;
     if (!row) throw new DomainError(ErrorCode.SETUP_REQUIRED, 'Company setup has not been completed');
-    return { baseCurrency: row.base_currency_code, timezone: row.timezone, lockDate: row.financial_lock_date, legalNameAr: row.legal_name_ar };
+    return {
+      baseCurrency: row.base_currency_code,
+      timezone: row.timezone,
+      lockDate: row.financial_lock_date,
+      legalNameAr: row.legal_name_ar,
+      defaultCountry: row.default_country_code,
+    };
   }
 
   today(): string {
@@ -89,34 +115,52 @@ export class CompanyService {
       financialLockDate: r.financial_lock_date,
       documentFooterAr: r.document_footer_ar,
       documentFooterEn: r.document_footer_en,
+      invoiceTitleAr: r.invoice_title_ar,
+      invoiceTitleEn: r.invoice_title_en,
+      invoiceTermsAr: r.invoice_terms_ar,
+      invoiceTermsEn: r.invoice_terms_en,
+      dateFormat: r.date_format,
+      numberFormat: r.number_format,
+      textDirection: r.text_direction,
       logoBase64: r.logo ? r.logo.toString('base64') : null,
       logoMime: r.logo_mime,
       rowVersion: r.row_version,
     };
   }
 
-  /** Used only by the first-run setup (inside its transaction). */
+  /** Used only by the first-run setup, inside its transaction. */
   insertInitial(input: CompanyProfileInput, userId: string | null): void {
     const v = this.validate(input);
     this.deps.db
       .prepare(
         `INSERT INTO company_profile (id, legal_name_ar, legal_name_en, trade_name_ar, trade_name_en, logo, logo_mime, address_ar, address_en,
            phone_primary, phone_secondary, email, website, tax_registration_no, commercial_registration_no, iata_agency_code,
-           base_currency_code, default_country_code, timezone, default_locale, document_footer_ar, document_footer_en, updated_at, updated_by)
+           base_currency_code, default_country_code, timezone, default_locale, document_footer_ar, document_footer_en,
+           invoice_title_ar, invoice_title_en, invoice_terms_ar, invoice_terms_en, date_format, number_format, text_direction, updated_at, updated_by)
          VALUES (1, @legalNameAr, @legalNameEn, @tradeNameAr, @tradeNameEn, @logo, @logoMime, @addressAr, @addressEn,
            @phonePrimary, @phoneSecondary, @email, @website, @taxRegistrationNo, @commercialRegistrationNo, @iataAgencyCode,
-           @baseCurrencyCode, @defaultCountryCode, @timezone, @defaultLocale, @documentFooterAr, @documentFooterEn, @now, @userId)`,
+           @baseCurrencyCode, @defaultCountryCode, @timezone, @defaultLocale, @documentFooterAr, @documentFooterEn,
+           @invoiceTitleAr, @invoiceTitleEn, @invoiceTermsAr, @invoiceTermsEn, @dateFormat, @numberFormat, @textDirection, @now, @userId)`,
       )
       .run({ ...v, now: this.deps.clock.now().toISOString(), userId });
   }
 
-  update(actor: Actor, input: CompanyProfileInput, rowVersion: number): CompanyProfileDto {
-    requirePermission(this.deps, actor, 'settings.company', 'company.update');
-    const v = this.validate(input);
+  update(actor: Actor, patch: CompanyProfileInput, rowVersion: number): CompanyProfileDto {
+    const before = this.get();
+    // Omitted (undefined) optional fields keep their current value; explicit null clears them.
+    const input = { ...patch } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(before)) if (input[k] === undefined && k !== 'rowVersion' && k !== 'baseCurrencyFrozen' && k !== 'financialLockDate') input[k] = v;
+    const v = this.validate(input as CompanyProfileInput);
+    const proposed = { ...v, logoBase64: v.logo ? v.logo.toString('base64') : null };
+    const groups = changedCompanyGroups(before as unknown as Record<string, unknown>, proposed as unknown as Record<string, unknown>);
+    if (before.rowVersion !== rowVersion) throw new DomainError(ErrorCode.STALE_RECORD, 'Company settings were changed by someone else');
+    if (groups.length === 0) return before;
+    // Authorise EVERY group the change touches (checked before the transaction so denials are audited).
+    for (const g of groups) requirePermission(this.deps, actor, COMPANY_GROUP_PERMISSION[g], `company.update:${g}`);
     return tx(this.deps, () => {
-      const before = this.get();
-      if (before.rowVersion !== rowVersion) throw new DomainError(ErrorCode.STALE_RECORD, 'Company settings were changed by someone else');
-      if (v.baseCurrencyCode !== before.baseCurrencyCode && before.baseCurrencyFrozen) {
+      const current = this.get();
+      if (current.rowVersion !== rowVersion) throw new DomainError(ErrorCode.STALE_RECORD, 'Company settings were changed by someone else');
+      if (v.baseCurrencyCode !== current.baseCurrencyCode && current.baseCurrencyFrozen) {
         throw new DomainError(ErrorCode.BASE_CURRENCY_FROZEN, 'The base currency cannot change after financial documents exist');
       }
       this.deps.db
@@ -127,17 +171,20 @@ export class CompanyService {
              commercial_registration_no=@commercialRegistrationNo, iata_agency_code=@iataAgencyCode, base_currency_code=@baseCurrencyCode,
              default_country_code=@defaultCountryCode, timezone=@timezone, default_locale=@defaultLocale,
              document_footer_ar=@documentFooterAr, document_footer_en=@documentFooterEn,
+             invoice_title_ar=@invoiceTitleAr, invoice_title_en=@invoiceTitleEn, invoice_terms_ar=@invoiceTermsAr, invoice_terms_en=@invoiceTermsEn,
+             date_format=@dateFormat, number_format=@numberFormat, text_direction=@textDirection,
              updated_at=@now, updated_by=@userId, row_version = row_version + 1
            WHERE id = 1 AND row_version = @rowVersion`,
         )
         .run({ ...v, now: this.deps.clock.now().toISOString(), userId: actor.userId, rowVersion });
       const after = this.get();
       this.deps.audit.append(actorOf(actor), {
-        action: 'settings.company_updated',
+        action: 'company.updated',
         entityType: 'company_profile',
         entityId: '1',
-        before: withoutLogo(before),
+        before: withoutLogo(current),
         after: withoutLogo(after),
+        metadata: { groups },
       });
       return after;
     });
@@ -154,7 +201,7 @@ export class CompanyService {
     if (change === 'LOCK') requirePermission(this.deps, actor, 'finance.lock_period', 'company.setLockDate');
     else {
       requirePermission(this.deps, actor, 'finance.unlock_period', 'company.setLockDate');
-      if (!reason || reason.trim().length < 5) throw new DomainError(ErrorCode.VALIDATION, 'Re-opening a locked period requires a reason');
+      if (!reason || reason.trim().length < 5) throw new DomainError(ErrorCode.VALIDATION, 'Re-opening a locked period requires a reason', { field: 'reason', reason: 'REQUIRED' });
     }
     return tx(this.deps, () => {
       this.deps.db
@@ -173,16 +220,20 @@ export class CompanyService {
   }
 
   private validate(input: CompanyProfileInput) {
-    if (!isValidTimeZone(input.timezone)) throw new DomainError(ErrorCode.VALIDATION, `Unknown timezone ${input.timezone}`);
+    const fail = (field: string, reason: string, message: string) => new DomainError(ErrorCode.VALIDATION, message, { field, reason });
+    if (!isValidTimeZone(input.timezone)) throw fail('timezone', 'INVALID_TIMEZONE', `Unknown timezone ${input.timezone}`);
+    assertCountryCode(input.defaultCountryCode, 'defaultCountryCode');
     const cur = this.deps.db.prepare('SELECT is_active FROM currency WHERE code = ?').get(input.baseCurrencyCode) as { is_active: number } | undefined;
-    if (!cur || cur.is_active !== 1) throw new DomainError(ErrorCode.VALIDATION, `Unknown currency ${input.baseCurrencyCode}`);
+    if (!cur || cur.is_active !== 1) throw fail('baseCurrencyCode', 'INVALID_CURRENCY', `Unknown currency ${input.baseCurrencyCode}`);
     let logo: Buffer | null = null;
     if (input.logoBase64) {
-      if (!input.logoMime) throw new DomainError(ErrorCode.VALIDATION, 'Logo type is required');
+      if (!input.logoMime) throw fail('logo', 'REQUIRED', 'Logo type is required');
       logo = Buffer.from(input.logoBase64, 'base64');
-      if (logo.length === 0 || logo.length > MAX_LOGO_BYTES) throw new DomainError(ErrorCode.VALIDATION, 'Logo must be under 512 KB');
+      if (logo.length === 0 || logo.length > MAX_LOGO_BYTES) throw fail('logo', 'TOO_LARGE', 'Logo must be under 512 KB');
     }
     const n = (s: string | null | undefined) => (s && s.trim() !== '' ? s.trim() : null);
+    const website = n(input.website);
+    if (website && !/^https?:\/\/\S+\.\S+$/i.test(website)) throw fail('website', 'INVALID_URL', 'Website must start with http:// or https://');
     return {
       legalNameAr: input.legalNameAr.trim(),
       legalNameEn: n(input.legalNameEn),
@@ -194,8 +245,8 @@ export class CompanyService {
       addressEn: n(input.addressEn),
       phonePrimary: n(input.phonePrimary),
       phoneSecondary: n(input.phoneSecondary),
-      email: n(input.email),
-      website: n(input.website),
+      email: normalizeEmail(input.email),
+      website,
       taxRegistrationNo: n(input.taxRegistrationNo),
       commercialRegistrationNo: n(input.commercialRegistrationNo),
       iataAgencyCode: n(input.iataAgencyCode),
@@ -205,6 +256,13 @@ export class CompanyService {
       defaultLocale: input.defaultLocale,
       documentFooterAr: n(input.documentFooterAr),
       documentFooterEn: n(input.documentFooterEn),
+      invoiceTitleAr: n(input.invoiceTitleAr),
+      invoiceTitleEn: n(input.invoiceTitleEn),
+      invoiceTermsAr: n(input.invoiceTermsAr),
+      invoiceTermsEn: n(input.invoiceTermsEn),
+      dateFormat: input.dateFormat ?? 'DD/MM/YYYY',
+      numberFormat: input.numberFormat ?? 'LATIN',
+      textDirection: input.textDirection ?? 'AUTO',
     };
   }
 }
