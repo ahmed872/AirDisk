@@ -1,7 +1,7 @@
 # Phase 1 — Foundation & Core Domain: Completion Report
 
-**Status:** complete, except the silent install on clean Windows, which is still pending
-(see §9). **Date:** 2026-09-28.
+**Status:** complete — including verification on a real Windows machine (CI run #2, see §3).
+**Date:** 2026-09-28.
 **Scope source:** the owner decisions Q1–Q13 and the Phase 1 brief. The Phase 0 financial
 model is preserved unchanged.
 
@@ -86,7 +86,8 @@ Electron smoke · `pnpm e2e` · `electron-builder --win nsis --x64`.
 | Packaged **Windows** `AirDesk.exe` smoke test (run under Wine) | **7/7 steps ok**, `platform: win32`, using the Windows SQLite/Argon2 binaries from inside the asar |
 | UI E2E (Playwright driving Electron) | **passed** |
 | Windows NSIS installer build | **success**: `AirDesk-Setup-0.1.0-x64.exe`, 122,541,983 bytes |
-| Silent install on clean Windows | **not verified here.** See §9. |
+| Windows CI job (real `windows-latest` runner), [run #2](https://github.com/ahmed872/AirDisk/actions/runs/36439059292) at `5bfa6a4` | **all steps passed:** 124 tests on Windows · NSIS installer built · **silent per-machine install** · packaged `AirDesk.exe` smoke test **7/7** (`platform: win32`, sqlite 3.53.4, Electron 44.4.5) · **silent uninstall kept `%ProgramData%\AirDesk`**. The installer is uploaded as the CI artifact `AirDesk-Setup-windows-x64`. |
+| Linux CI job, same run | **all steps passed:** typecheck · lint · tests+coverage · build · Electron smoke · UI E2E |
 
 The UI E2E run covered:
 
@@ -212,15 +213,16 @@ Each deviation below is deliberate. None of them change the financial model.
 
 ## 9. Known limitations (carried forward, none blocking Phase 2)
 
-1. **Silent install on clean Windows is not yet verified.**
-   * The installer is built, and the packaged app passes the full smoke test on Windows
-     binaries.
-   * Under Wine, the installer's silent mode exits with code 2; the interactive run just
-     waits on its window. I suspect the elevation (UAC) relaunch fails under Wine, but I
-     haven't proven it.
-   * The CI `windows` job installs silently on a real Windows runner, runs the packaged
-     smoke test and verifies that uninstall keeps the data. **Its result must be checked
-     before Phase 1 is formally closed.**
+1. **Windows install: verified on a real runner, not yet on an office PC.**
+   * CI run #2 passed the full install → run → uninstall cycle on `windows-latest`
+     (a Windows Server image with admin rights).
+   * Not yet exercised: an interactive install by a non-admin user (UAC prompt), and
+     Windows 10 / 11 desktop editions. This is to be covered in the Phase 11 pilot.
+   * Under Wine only, the silent installer exits with code 2; since the real-Windows run
+     passes, this is a Wine limitation.
+   * CI run #1 failed before reaching Windows because Electron 44 has no `postinstall`
+     download hook. It was fixed in `5bfa6a4` with a root `postinstall` that fetches the
+     Electron binary.
 2. The installer is **unsigned** (SmartScreen will warn) and uses the default Electron
    icon. Code signing and branding are Phase 10.
 3. Automatic/scheduled backups, retention, a secondary backup destination and encrypted
