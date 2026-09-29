@@ -569,7 +569,7 @@ export class FinanceService {
     const row = this.deps.db.prepare('SELECT booking_id FROM cancellation_request WHERE id = ?').get(id) as { booking_id: string } | undefined;
     if (!row) throw new DomainError(ErrorCode.NOT_FOUND, 'Request not found');
     this.bookings.accessible(actor, row.booking_id);
-    return this.bookings.cancellations(row.booking_id).find((c) => c.id === id)!;
+    return this.bookings.cancellations(row.booking_id, hasAny(actor, 'booking.view_cost')).find((c) => c.id === id)!;
   }
 
   listCancellations(actor: Actor, status: 'OPEN' | 'CLOSED' | 'WITHDRAWN' | 'ALL'): CancellationDto[] {
@@ -582,7 +582,7 @@ export class FinanceService {
       } catch {
         continue;
       }
-      out.push(...this.bookings.cancellations(b).filter((c) => status === 'ALL' || c.overallStatus === status));
+      out.push(...this.bookings.cancellations(b, hasAny(actor, 'booking.view_cost')).filter((c) => status === 'ALL' || c.overallStatus === status));
     }
     return out.sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
   }

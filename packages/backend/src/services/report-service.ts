@@ -8,7 +8,7 @@ import { searchClause } from './masterdata-support';
 
 export const REPORT_IDS = [
   'sales', 'purchases', 'profit', 'receivables', 'payables', 'supplier_volume', 'expenses', 'refunds', 'cancellations', 'flight_changes',
-  'employee_activity', 'collections',
+  'employee_activity', 'collections', 'cash_book',
 ] as const;
 export type ReportId = (typeof REPORT_IDS)[number];
 
@@ -16,6 +16,7 @@ const REPORT_PERMISSION: Record<ReportId, string> = {
   sales: 'report.sales', purchases: 'report.purchases', profit: 'report.profit', receivables: 'report.receivables', payables: 'report.payables',
   supplier_volume: 'report.supplier_performance', expenses: 'report.expenses', refunds: 'report.refunds', cancellations: 'report.refunds',
   flight_changes: 'report.schedule_changes', employee_activity: 'report.employee_activity', collections: 'report.receivables',
+  cash_book: 'treasury.view',
 };
 
 const col = (key: string, label: string, type: ReportColumnDto['type'] = 'text'): ReportColumnDto => ({ key, label, type });
@@ -243,7 +244,11 @@ export class ReportService {
           col('net_impact', 'netImpact', 'money')], data, null);
       }
       case 'flight_changes': {
-        const changes = this.bookings.scheduleChanges(null, { from, to });
+        // Users without booking.view_all only see changes on their own records (same rule as everywhere else).
+        const changes = this.bookings.scheduleChanges(null, { from, to }).filter((c) => {
+          if (!own) return true;
+          try { this.bookings.accessible(actor, c.bookingId); return true; } catch { return false; }
+        });
         const rows = changes.map((c) => ({
           changed_at: c.changedAt.slice(0, 16).replace('T', ' '), booking_no: c.bookingNo, segment: c.segmentLabel, severity: c.severity,
           changes: c.fields.map((f) => `${f.field}: ${f.oldValue ?? '—'} → ${f.newValue ?? '—'}`).join('; '), customer: c.customerName, status: c.notificationStatus,
@@ -280,6 +285,33 @@ export class ReportService {
         return out([col('date', 'date', 'date'), col('doc_no', 'document', 'code'), col('doc_type', 'type', 'code'), col('customer', 'customer'), col('booking_no', 'booking', 'code'),
           col('payment_method', 'method', 'code'), col('account', 'account'), col('payment_reference', 'reference', 'code'), col('currency', 'currency', 'code'),
           col('amount', 'amount', 'money'), col('base', 'baseAmount', 'money'), col('received_by', 'user')], rows, sum(rows, ['base']));
+      }
+      case 'cash_book': {
+        // Per money account: opening balance, every movement in the period with a running balance, closing balance.
+        const accounts = db.prepare('SELECT id, name, currency_code FROM money_account ORDER BY name').all() as { id: string; name: string; currency_code: string }[];
+        const openingOf = db.prepare(`SELECT COALESCE(SUM(jl.debit_minor - jl.credit_minor), 0) AS v FROM journal_line jl JOIN journal_entry je ON je.id = jl.entry_id
+                                      WHERE jl.account_code = '1110' AND jl.money_account_id = ? AND je.entry_date < ?`);
+        const movements = db.prepare(`SELECT je.entry_date AS date, d.doc_no, d.doc_type, d.reason_code, COALESCE(c.full_name, s.name, d.description) AS party, d.payment_reference,
+                                             jl.debit_minor AS money_in, jl.credit_minor AS money_out
+                                      FROM journal_line jl JOIN journal_entry je ON je.id = jl.entry_id JOIN fin_document d ON d.id = je.document_id
+                                      LEFT JOIN customer c ON c.id = d.customer_id LEFT JOIN supplier s ON s.id = d.supplier_id
+                                      WHERE jl.account_code = '1110' AND jl.money_account_id = ? AND je.entry_date BETWEEN ? AND ?
+                                      ORDER BY je.entry_date, d.created_at, d.doc_no, jl.line_no`);
+        const rows: ReportDto['rows'] = [];
+        for (const a of accounts) {
+          const opening = (openingOf.get(a.id, from) as { v: number }).v;
+          const lines = movements.all(a.id, from, to) as { date: string; doc_no: string; doc_type: string; reason_code: string | null; party: string | null; payment_reference: string | null; money_in: number; money_out: number }[];
+          if (opening === 0 && lines.length === 0) continue;
+          let balance = opening;
+          rows.push({ date: from, account: a.name, currency: a.currency_code, doc_no: null, doc_type: 'OPENING', party: null, reference: null, money_in: null, money_out: null, balance });
+          for (const l of lines) {
+            balance += l.money_in - l.money_out;
+            rows.push({ date: l.date, account: a.name, currency: a.currency_code, doc_no: l.doc_no, doc_type: l.doc_type, party: l.party, reference: l.payment_reference, money_in: l.money_in || null, money_out: l.money_out || null, balance });
+          }
+        }
+        return out([col('date', 'date', 'date'), col('account', 'account'), col('doc_no', 'document', 'code'), col('doc_type', 'type', 'code'), col('party', 'party'),
+          col('reference', 'reference', 'code'), col('currency', 'currency', 'code'), col('money_in', 'moneyIn', 'money'), col('money_out', 'moneyOut', 'money'), col('balance', 'runningBalance', 'money')],
+        rows, null, ['amountsInTransactionCurrency']);
       }
       default: {
         const never: never = id;

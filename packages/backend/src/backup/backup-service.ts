@@ -109,12 +109,13 @@ export async function createBackupFile(opts: {
     // 1. Consistent snapshot while the app keeps running (SQLite online backup API).
     //    1,000 pages (~4 MB) per step: few steps, each short enough to keep the app responsive.
     await opts.db.backup(snapshotPath, { progress: () => SNAPSHOT_PAGES_PER_STEP });
-    // 2. Verify the snapshot itself before packaging it.
+    // 2. Describe the snapshot for the manifest. Its full integrity check happens once, in step 4,
+    //    on the finished file (the same bytes), before the backup is reported successful.
     const snap = openDatabase({ path: snapshotPath, fileMustExist: true, wal: false });
     let facts: ReturnType<typeof describe>;
     try {
-      const check = (snap.pragma('integrity_check') as { integrity_check: string }[]).map((r) => r.integrity_check).join('; ');
-      if (check !== 'ok') throw new DomainError(ErrorCode.BACKUP_INVALID, `Snapshot failed integrity check: ${check}`);
+      const quick = (snap.pragma('quick_check') as { quick_check: string }[]).map((r) => r.quick_check).join('; ');
+      if (quick !== 'ok') throw new DomainError(ErrorCode.BACKUP_INVALID, `Snapshot failed integrity check: ${quick}`);
       facts = describe(snap);
     } finally {
       snap.close();

@@ -6,19 +6,23 @@ export function Modal({ title, onClose, children, footer, wide, testId }: {
   title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; testId?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Callers often pass an inline onClose; keep the latest one in a ref so focus is set once
+  // when the dialog opens (not on every re-render, which would steal focus while typing).
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
     const first = ref.current?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button');
     first?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') closeRef.current();
     };
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
       prev?.focus();
     };
-  }, [onClose]);
+  }, []);
   return (
     <div className="overlay" role="presentation">
       <div ref={ref} className={`dialog${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-label={title} data-testid={testId}>

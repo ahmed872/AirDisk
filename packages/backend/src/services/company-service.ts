@@ -143,6 +143,7 @@ export class CompanyService {
            @invoiceTitleAr, @invoiceTitleEn, @invoiceTermsAr, @invoiceTermsEn, @dateFormat, @numberFormat, @textDirection, @now, @userId)`,
       )
       .run({ ...v, now: this.deps.clock.now().toISOString(), userId });
+    this.deps.db.prepare('UPDATE currency SET is_active = 1 WHERE code = ?').run(v.baseCurrencyCode);
   }
 
   update(actor: Actor, patch: CompanyProfileInput, rowVersion: number): CompanyProfileDto {
@@ -177,6 +178,7 @@ export class CompanyService {
            WHERE id = 1 AND row_version = @rowVersion`,
         )
         .run({ ...v, now: this.deps.clock.now().toISOString(), userId: actor.userId, rowVersion });
+      this.deps.db.prepare('UPDATE currency SET is_active = 1 WHERE code = ?').run(v.baseCurrencyCode);
       const after = this.get();
       this.deps.audit.append(actorOf(actor), {
         action: 'company.updated',
@@ -223,8 +225,9 @@ export class CompanyService {
     const fail = (field: string, reason: string, message: string) => new DomainError(ErrorCode.VALIDATION, message, { field, reason });
     if (!isValidTimeZone(input.timezone)) throw fail('timezone', 'INVALID_TIMEZONE', `Unknown timezone ${input.timezone}`);
     assertCountryCode(input.defaultCountryCode, 'defaultCountryCode');
+    // Any known currency can be the base currency; it is activated when saved (see activateBaseCurrency).
     const cur = this.deps.db.prepare('SELECT is_active FROM currency WHERE code = ?').get(input.baseCurrencyCode) as { is_active: number } | undefined;
-    if (!cur || cur.is_active !== 1) throw fail('baseCurrencyCode', 'INVALID_CURRENCY', `Unknown currency ${input.baseCurrencyCode}`);
+    if (!cur) throw fail('baseCurrencyCode', 'INVALID_CURRENCY', `Unknown currency ${input.baseCurrencyCode}`);
     let logo: Buffer | null = null;
     if (input.logoBase64) {
       if (!input.logoMime) throw fail('logo', 'REQUIRED', 'Logo type is required');

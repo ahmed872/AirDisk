@@ -13,7 +13,7 @@ type Can = (p: string) => boolean;
 type Dialog =
   | { k: 'header' } | { k: 'passenger'; p: PassengerDto | null } | { k: 'segment'; s: SegmentDto | null } | { k: 'price'; passenger: PassengerDto; item: PriceItemDto | null }
   | { k: 'ticketed' } | { k: 'discard' } | { k: 'pay'; kind: PayKind; supplierId?: string; supplierName?: string; currency: string }
-  | { k: 'doc'; doc: DocumentDto } | { k: 'cancelDoc'; doc: DocumentDto } | { k: 'print' } | { k: 'ticketNo'; ticketId: string } | { k: 'reissue'; ticketId: string }
+  | { k: 'doc'; doc: DocumentDto } | { k: 'cancelDoc'; doc: DocumentDto } | { k: 'print' } | { k: 'ticketNo'; ticketId: string; current?: string | null } | { k: 'reissue'; ticketId: string }
   | { k: 'cancelReq' } | { k: 'supplierConfirm'; c: CancellationDto } | { k: 'customerCredit'; c: CancellationDto } | { k: 'cxNote'; c: CancellationDto; action: 'reject' | 'nothing' | 'withdraw' }
   | { k: 'notify'; change: ScheduleChangeDto } | { k: 'confirmChange'; change: ScheduleChangeDto } | { k: 'adjust'; mode: 'sale' | 'cost' | 'supplier' };
 
@@ -151,6 +151,7 @@ export function RecordPage({ id, can, onBack }: { id: string; can: Can; onBack: 
             <tbody>{b.tickets.map((x) => (
               <tr key={x.id} className={x.status === 'EXCHANGED' ? 'muted' : ''} data-ticket={x.status}>
                 <td className="ltr">{x.ticketNumber ?? (x.status === 'ISSUED' && (can('booking.issue') || can('booking.edit')) ? <button className="link" onClick={() => setDialog({ k: 'ticketNo', ticketId: x.id })}>{t('recordTicketNumber')}</button> : '—')}
+                  {x.ticketNumber && x.status !== 'EXCHANGED' && can('booking.adjust_price') && <button className="link small" onClick={() => setDialog({ k: 'ticketNo', ticketId: x.id, current: x.ticketNumber })} data-testid="correct-ticket-number">{t('correct')}</button>}
                   {x.exchangedFromNumber && <div className="small muted">{t('replaces')} {x.exchangedFromNumber}</div>}</td>
                 <td className="ltr">{x.passengerName}</td><td>{x.airlineName}</td><td>{x.supplierName}</td><td className="ltr">{date(x.issueDate)}</td>
                 <td><span className={`badge ${x.status === 'ISSUED' ? 'ok' : 'warn'}`}>{t(`tk_${x.status}` as TKey)}</span></td>
@@ -321,7 +322,7 @@ export function RecordPage({ id, can, onBack }: { id: string; can: Can; onBack: 
       {dialog?.k === 'cancelDoc' && <ConfirmDialog title={`${t('cancelDocument')} ${dialog.doc.docNo}`} text={t('cancelDocumentText')} confirmLabel={t('cancelDocument')} danger withReason onClose={() => setDialog(null)}
         onConfirm={async (reason) => { await call('documents.cancel', { id: dialog.doc.id, reason: reason ?? '' }); refresh(t('saved')); }} />}
       {dialog?.k === 'reissue' && <ReissueDialog b={b} ticketId={dialog.ticketId} canCost={can('booking.enter_cost')} onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
-      {dialog?.k === 'ticketNo' && <TicketNumberDialog bookingId={b.id} ticketId={dialog.ticketId} onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
+      {dialog?.k === 'ticketNo' && <TicketNumberDialog bookingId={b.id} ticketId={dialog.ticketId} current={dialog.current ?? null} onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
       {dialog?.k === 'cancelReq' && <CancelRequestDialog b={b} onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
       {dialog?.k === 'supplierConfirm' && <CxAmountsDialog b={b} c={dialog.c} side="supplier" onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
       {dialog?.k === 'customerCredit' && <CxAmountsDialog b={b} c={dialog.c} side="customer" onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
@@ -605,14 +606,16 @@ function ReissueDialog({ b, ticketId, canCost, onClose, onSaved }: { b: BookingD
   );
 }
 
-function TicketNumberDialog({ bookingId, ticketId, onClose, onSaved }: { bookingId: string; ticketId: string; onClose: () => void; onSaved: () => void }) {
+function TicketNumberDialog({ bookingId, ticketId, current, onClose, onSaved }: { bookingId: string; ticketId: string; current: string | null; onClose: () => void; onSaved: () => void }) {
   const { t } = useI18n();
   const [n, setN] = useState('');
+  const [reason, setReason] = useState('');
   const { error, busy, run } = useSave(onSaved);
   return (
-    <Modal title={t('recordTicketNumber')} onClose={onClose}
-      footer={<><button className="primary" disabled={busy || !n} onClick={() => run(() => call('bookings.setTicketNumber', { bookingId, ticketId, ticketNumber: n }))}>{t('save')}</button><button onClick={onClose}>{t('cancel')}</button></>}>
-      <label>{t('ticketNumber')}<input className="ltr code" value={n} onChange={(e) => setN(e.target.value)} /><span className="hint">{t('ticketNumberHint')}</span></label>
+    <Modal title={current ? `${t('correctTicketNumber')} — ${current}` : t('recordTicketNumber')} onClose={onClose} testId="ticket-number-dialog"
+      footer={<><button className="primary" disabled={busy || !n || (!!current && !reason.trim())} onClick={() => run(() => call('bookings.setTicketNumber', { bookingId, ticketId, ticketNumber: n, ...(current ? { correctionReason: reason } : {}) }))} data-testid="save">{t('save')}</button><button onClick={onClose}>{t('cancel')}</button></>}>
+      <label>{t('ticketNumber')}<input className="ltr code" value={n} onChange={(e) => setN(e.target.value)} data-testid="tn-value" /><span className="hint">{t('ticketNumberHint')}</span></label>
+      {current && <label>{t('changeReason')}<input value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} data-testid="tn-reason" /></label>}
       {error && <Alert kind="error">{error}</Alert>}
     </Modal>
   );

@@ -55,6 +55,7 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
         schemaVersion: backend.schemaVersionNow,
         companyName: setupRequired ? null : s.company.core().legalNameAr,
         defaultLocale: setupRequired ? 'ar' : s.company.get().defaultLocale,
+        ...(setupRequired ? { setupCurrencies: s.currencies.list().map((c) => ({ code: c.code, nameAr: c.nameAr, nameEn: c.nameEn })) } : {}),
       };
     },
   },
@@ -283,7 +284,7 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
   'bookings.release': { access: perm('booking.reserve'), run: (ctx, i) => ctx.backend.svc.bookings.release(actor(ctx), i.id, i.rowVersion) },
   'bookings.discard': { access: perm('booking.discard'), run: (ctx, i) => ctx.backend.svc.bookings.discard(actor(ctx), i.id, i.rowVersion, i.reason) },
   'bookings.issue': { access: perm('booking.issue'), run: (ctx, i) => ctx.backend.svc.bookings.issue(actor(ctx), i.id, i) },
-  'bookings.setTicketNumber': { access: perm('booking.issue', 'booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.setTicketNumber(actor(ctx), i.bookingId, i.ticketId, i.ticketNumber) },
+  'bookings.setTicketNumber': { access: perm('booking.issue', 'booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.setTicketNumber(actor(ctx), i.bookingId, i.ticketId, i.ticketNumber, i.correctionReason) },
   'bookings.adjustSale': { access: perm('booking.adjust_price'), run: (ctx, i) => ctx.backend.svc.bookings.adjustSale(actor(ctx), i.bookingId, i) },
   'bookings.adjustCost': { access: perm('booking.adjust_price'), run: (ctx, i) => ctx.backend.svc.bookings.adjustCost(actor(ctx), i.bookingId, i) },
   'bookings.changeSupplier': { access: perm('booking.change_supplier'), run: (ctx, i) => ctx.backend.svc.bookings.changeSupplier(actor(ctx), i.bookingId, i) },
@@ -330,7 +331,7 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
   'statements.get': { access: perm('report.statements'), run: (ctx, i) => ctx.backend.svc.reports.statement(actor(ctx), i.party, i.partyId, i.from, i.to) },
   'aging.get': { access: perm('report.receivables', 'report.payables'), run: (ctx, i) => ctx.backend.svc.reports.aging(actor(ctx), i.party, i.asOf) },
   'reports.run': {
-    access: perm('report.sales', 'report.purchases', 'report.profit', 'report.receivables', 'report.payables', 'report.supplier_performance', 'report.expenses', 'report.refunds', 'report.schedule_changes', 'report.employee_activity'),
+    access: perm('report.sales', 'report.purchases', 'report.profit', 'report.receivables', 'report.payables', 'report.supplier_performance', 'report.expenses', 'report.refunds', 'report.schedule_changes', 'report.employee_activity', 'treasury.view'),
     run: (ctx, i) => ctx.backend.svc.reports.run(actor(ctx), i.report, i.from, i.to),
   },
   'dashboard.metrics': { access: perm('dashboard.operational', 'dashboard.financial'), run: (ctx, i) => ctx.backend.svc.reports.dashboard(actor(ctx), i.from, i.to) },

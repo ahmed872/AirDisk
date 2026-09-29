@@ -31,9 +31,9 @@ export function seedSystemData(db: Db, opts: { newId: IdGenerator; now: string; 
     }
 
     const insCurrency = db.prepare(
-      'INSERT OR IGNORE INTO currency (code, name_ar, name_en, symbol, minor_unit, is_active) VALUES (?, ?, ?, ?, ?, 1)',
+      'INSERT OR IGNORE INTO currency (code, name_ar, name_en, symbol, minor_unit, is_active) VALUES (?, ?, ?, ?, ?, ?)',
     );
-    for (const c of SEED_CURRENCIES) insCurrency.run(c.code, c.nameAr, c.nameEn, c.symbol, c.minorUnit);
+    for (const c of SEED_CURRENCIES) insCurrency.run(c.code, c.nameAr, c.nameEn, c.symbol, c.minorUnit, c.active === false ? 0 : 1);
 
     const insAccount = db.prepare(
       `INSERT OR IGNORE INTO ledger_account (code, name_ar, name_en, account_class, normal_side, dimension, is_system, is_active)

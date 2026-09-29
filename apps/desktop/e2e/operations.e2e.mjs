@@ -269,6 +269,37 @@ try {
     assert.equal(await win.locator('[data-testid=schedule-banner]').count(), 0, 'a customer-requested change raises no notification alert');
   });
 
+  await step('keyboard-typing-ticket-number-correction-cash-book', async () => {
+    // Real keystrokes (not fill): focus must stay in the field being typed into.
+    await win.click('[data-testid=correct-ticket-number] >> nth=0');
+    await win.waitForSelector('[data-testid=ticket-number-dialog]');
+    await win.click('[data-testid=tn-value]');
+    await win.keyboard.type('0779990001113');
+    await win.click('[data-testid=tn-reason]');
+    await win.keyboard.type('رقم مكتوب خطأ');
+    assert.equal(await win.inputValue('[data-testid=tn-value]'), '0779990001113');
+    assert.equal(await win.inputValue('[data-testid=tn-reason]'), 'رقم مكتوب خطأ');
+    await saveDialog();
+    await win.waitForFunction(() => /0779990001113/.test(document.querySelector('[data-testid=tickets-table]')?.textContent ?? ''));
+    await win.click('[data-nav=finance]');
+    await win.click('[data-testid=fin-tab-categories]');
+    await win.click('[data-testid=new-category]');
+    const inputs = win.locator('[role=dialog] input');
+    await inputs.nth(0).click(); await win.keyboard.type('NET');
+    await inputs.nth(1).click(); await win.keyboard.type('إنترنت');
+    await inputs.nth(2).click(); await win.keyboard.type('Internet');
+    assert.deepEqual([await inputs.nth(0).inputValue(), await inputs.nth(1).inputValue(), await inputs.nth(2).inputValue()], ['NET', 'إنترنت', 'Internet']);
+    await win.keyboard.press('Escape');
+    await win.waitForSelector('[role=dialog]', { state: 'detached' });
+    await win.click('[data-nav=reports]');
+    await win.selectOption('[data-testid=report-id]', 'cash_book');
+    await win.fill('[data-testid=report-from]', '2026-01-01');
+    await win.click('[data-testid=run-report]');
+    await win.waitForSelector('[data-testid=report-table]');
+    assert.match(await text('[data-testid=report-table]'), /رصيد أول المدة|TRF-\d{4}-000001/);
+    await shot('cash-book');
+  });
+
   await step('layout-1366x768-and-1920x1080', async () => {
     // No page may overflow horizontally at the two reference resolutions (wide tables scroll inside their own container).
     const pages = ['dashboard', 'tickets', 'travel', 'customers', 'suppliers', 'finance', 'reports', 'users', 'company', 'audit', 'system'];
@@ -299,6 +330,15 @@ try {
     await win.click('[data-testid=toggle-language]');
     await win.waitForFunction(() => document.documentElement.dir === 'ltr');
     await win.waitForSelector('text=Ticket record');
+    for (const p of ['dashboard', 'tickets', 'finance', 'reports', 'system']) {
+      await win.click(`[data-nav=${p}]`);
+      await win.waitForSelector(`[data-testid=page-${p}]`);
+      const overflow = await win.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 1, `${p} overflows horizontally in English by ${overflow}px`);
+    }
+    await win.fill('[data-testid=global-search]', 'ABC123');
+    await win.click('[data-testid=global-results] [data-hit=booking]');
+    await win.waitForSelector('[data-testid=page-record]');
     assert.match(await text('[data-testid=settlement]'), /Paid/);
   });
 

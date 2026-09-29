@@ -154,11 +154,14 @@ function ExpenseDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
       onDone();
     } catch (e) { setError(errorMessage(e)); }
   };
+  const account = usable.find((a) => a.id === accountId);
+  const overdraw = !!account && account.balanceMinor !== null && (account.accountType === 'CASH' || account.accountType === 'WALLET') && (v.amount ?? 0) > account.balanceMinor;
   if (doc) return <DocumentPrint doc={doc} onClose={onClose} />;
   return (
     <Modal wide title={t('newExpense')} onClose={onClose} testId="expense-dialog"
       footer={<><button className="primary" disabled={!v.amount || !accountId || !v.description} onClick={save} data-testid="save">{t('save')}</button><button onClick={onClose}>{t('cancel')}</button></>}>
       {error && <Alert kind="error">{error}</Alert>}
+      {overdraw && <Alert kind="warn">{t('cashWillBeNegative')}: <span className="ltr">{m.fmt(account!.balanceMinor, account!.currencyCode)}</span></Alert>}
       <div className="grid">
         <label>{t('expenseCategory')}<select value={categoryId} onChange={(e) => setV({ ...v, categoryId: e.target.value })} data-testid="exp-category">{(cats.data ?? []).map((c) => <option key={c.id} value={c.id}>{locale === 'ar' ? c.nameAr : c.nameEn}</option>)}</select></label>
         <CurrencySelect label={t('currency')} value={v.currency} onChange={(c) => setV({ ...v, currency: c, accountId: '' })} />

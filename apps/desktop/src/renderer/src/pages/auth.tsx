@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import type { SessionUserDto } from '@airdesk/contracts';
+import { useEffect, useState, type FormEvent } from 'react';
+import type { SessionUserDto, SystemStatusDto } from '@airdesk/contracts';
 import { call } from '../api';
 import { useI18n, type TKey } from '../i18n';
 
@@ -69,15 +69,16 @@ export function ChangePasswordPage({ onDone }: { onDone: () => void }) {
   );
 }
 
-const CURRENCIES = ['EGP', 'SAR', 'USD', 'EUR', 'AED', 'KWD'];
 
 export function SetupPage({ onDone }: { onDone: () => void }) {
-  const { t, errorMessage, setLocale } = useI18n();
+  const { t, errorMessage, setLocale, locale } = useI18n();
   const [f, setF] = useState({
     legalNameAr: '', legalNameEn: '', baseCurrencyCode: 'EGP', defaultCountryCode: 'EG', timezone: 'Africa/Cairo', defaultLocale: 'ar' as 'ar' | 'en',
     username: '', displayName: '', password: '', confirm: '',
   });
   const [error, setError] = useState<string | null>(null);
+  const [currencies, setCurrencies] = useState<{ code: string; nameAr: string; nameEn: string }[]>([]);
+  useEffect(() => { call<SystemStatusDto>('system.status').then((s) => setCurrencies(s.setupCurrencies ?? []), () => setCurrencies([])); }, []);
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const submit = async (e: FormEvent) => {
@@ -112,11 +113,12 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
           <label>{t('legalNameAr')}<input data-testid="setup-legalNameAr" value={f.legalNameAr} onChange={set('legalNameAr')} required autoFocus /></label>
           <label>{t('legalNameEn')}<input className="ltr" data-testid="setup-legalNameEn" value={f.legalNameEn} onChange={set('legalNameEn')} /></label>
           <label>{t('baseCurrency')}
-            <select data-testid="setup-currency" value={f.baseCurrencyCode} onChange={set('baseCurrencyCode')}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select>
+            <select data-testid="setup-currency" value={f.baseCurrencyCode} onChange={set('baseCurrencyCode')}>{(currencies.length ? currencies : [{ code: 'EGP', nameAr: '', nameEn: '' }]).map((c) => <option key={c.code} value={c.code}>{c.code}{c.nameEn ? ` — ${locale === 'ar' ? c.nameAr : c.nameEn}` : ''}</option>)}</select>
             <span className="muted">{t('baseCurrencyHint')}</span>
           </label>
           <label>{t('country')}<input className="ltr" data-testid="setup-country" maxLength={2} value={f.defaultCountryCode} onChange={set('defaultCountryCode')} required /></label>
-          <label>{t('timezone')}<input className="ltr" data-testid="setup-timezone" value={f.timezone} onChange={set('timezone')} required /></label>
+          <label>{t('timezone')}<input className="ltr" data-testid="setup-timezone" list="setup-timezones" value={f.timezone} onChange={set('timezone')} required />
+            <datalist id="setup-timezones">{['Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai', 'Asia/Kuwait', 'Asia/Qatar', 'Asia/Bahrain', 'Asia/Muscat', 'Asia/Amman', 'Asia/Baghdad', 'Asia/Beirut', 'Africa/Tripoli', 'Africa/Tunis', 'Africa/Algiers', 'Africa/Casablanca', 'Africa/Khartoum', 'Europe/Istanbul', 'Europe/London'].map((z) => <option key={z} value={z} />)}</datalist></label>
           <label>{t('defaultLocale')}
             <select value={f.defaultLocale} onChange={set('defaultLocale')}><option value="ar">العربية</option><option value="en">English</option></select>
           </label>

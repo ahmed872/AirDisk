@@ -40,6 +40,7 @@ export function SystemPage({ canBackup, canRestore, canCheck, canSettings, onRes
     <div className="page card" data-testid="page-system">
       <h1>{t('navSystem')}</h1>
       {msg && <div className={`alert ${msg.ok ? 'ok' : 'error'}`}>{msg.text}</div>}
+      {busy && <div className="alert info" role="status" data-testid="system-busy">{t('workingPleaseWait')}</div>}
       <div className="actions">
         {canBackup && (
           <button className="primary" disabled={busy} onClick={() => run(async () => {

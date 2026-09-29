@@ -15,6 +15,8 @@ export interface SystemStatusDto {
   schemaVersion: number;
   companyName: string | null;
   defaultLocale: 'ar' | 'en';
+  /** Only while first-run setup is pending: the currencies that can be chosen as base currency. */
+  setupCurrencies?: { code: string; nameAr: string; nameEn: string }[];
 }
 
 export interface SessionUserDto {

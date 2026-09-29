@@ -2,7 +2,7 @@
 
 Version 1.0.0-rc.1 · Audience: the person who installs, configures and looks after AirDesk in an office (owner, office manager, IT support). The day-to-day user guide is in Arabic: [user-guide-ar.md](user-guide-ar.md).
 
-> **Scope.** AirDesk records and manages airline-ticket transactions that were booked and issued **outside** the system (GDS, airline portal, consolidator). It does not search flights, hold seats, create PNRs or issue tickets.
+> **Scope.** AirDesk records and manages airline-ticket transactions that were booked and issued **outside** the system (GDS, airline portal, consolidator). It does **not** search flights, reserve or hold seats, create PNRs, issue tickets, or connect to any GDS, airline or consolidator system.
 
 ## 1. Requirements
 
@@ -55,7 +55,7 @@ The installer grants the local *Users* group modify rights on `%ProgramData%\Air
 ## 4. First run
 
 The first-run screen appears once per database:
-1. **Company:** Arabic legal name (required), English name, base currency (frozen after the first financial document), country, time zone, default language.
+1. **Company:** Arabic legal name (required), English name, base currency (any of the 16 seeded currencies: EGP, SAR, AED, KWD, QAR, OMR, BHD, JOD, IQD, LYD, TND, MAD, USD, EUR, GBP, TRY; frozen after the first financial document; the chosen currency is activated automatically), country, time zone, default language.
 2. **First Admin:** username, display name, password (≥ 10 characters, not trivially weak). Passwords are stored only as Argon2id hashes.
 3. A cash account in the base currency is created automatically.
 
@@ -74,7 +74,7 @@ Then configure (all under the admin menus):
 - **Audit trail:** every change, login, export, backup and restore is recorded with user, time and before/after values, in a SHA-256 hash chain verified by *Run integrity check*. Passwords never appear; passport/ID numbers are masked.
 - **Electron hardening:** sandboxed renderer, context isolation, no Node in the renderer, strict Content-Security-Policy, no remote content, navigation and new windows blocked (only `wa.me` links open in the external browser), all permission requests denied, Electron fuses (no `RunAsNode`, no inspector, asar integrity validated, app loads only from asar). The renderer's bridge is exactly four functions: `invoke`, `exportPdf`, `exportCsv`, `pickBackupFile`.
 - **Exports:** PDF/CSV only through a user-confirmed Save dialog; CSV needs `report.export`; every export is audited; CSV cells cannot run as spreadsheet formulas.
-- **Encryption at rest is NOT enabled in this version.** The database and backup files are protected by Windows file permissions only. Keep the PC's Windows accounts password-protected, use BitLocker on the disk, and store off-site backup copies securely (see §6). Encrypted databases with a recovery passphrase are designed (docs/phase-1/encryption-and-keys.md) and scheduled before general availability.
+- **Encryption at rest is NOT enabled in this version.** The database and backup files are protected by Windows file permissions only. Keep the PC's Windows accounts password-protected, use BitLocker on the disk, and store off-site backup copies securely (see §6). Encrypted databases with a recovery passphrase are designed; the verified library behaviour and the exact implementation steps are in [encryption-plan.md](encryption-plan.md). This is a release blocker for general sale.
 
 ## 6. Backup and restore
 
@@ -85,7 +85,7 @@ Then configure (all under the admin menus):
 - The app must be running for automatic backups; if it was closed for days, the backup runs on the next start.
 
 ### Manual backup
-**Backup & restore → Back up now.** A backup is reported successful only after the file was re-read, its SHA-256 checked, decompressed and integrity-checked (SQLite integrity, foreign keys, audit chain, trial balance).
+**Backup & restore → Back up now.** A backup is reported successful only after the file was re-read, its SHA-256 checked, decompressed and integrity-checked (SQLite integrity, foreign keys, audit chain, trial balance). Duration: 1–2 s for a typical office database; about 13–15 s for a very large one (140 MB, 10,000 ticket records), during which AirDesk is busy — do not close it. The destination is always an absolute folder path; a failed backup is recorded as FAILED in the history and audit log and leaves no partial file.
 
 ### Off-site copies (required practice)
 Copy the newest `.adbk` from `%ProgramData%\AirDesk\data\backups` to a USB drive or another location **at least weekly**. A backup on the same disk does not protect against disk failure, theft or ransomware. Because backups are not encrypted in this version, treat the files as confidential.

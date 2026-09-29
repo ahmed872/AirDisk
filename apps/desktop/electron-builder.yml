@@ -28,8 +28,9 @@ win:
       arch: [x64]
   artifactName: AirDesk-Setup-${version}-x64.${ext}
   # Writes product name, version and copyright into AirDesk.exe (Windows file
-  # properties). Without a certificate (CSC_LINK) signing itself is skipped:
-  # code signing is configured only in the protected release workflow.
+  # properties). Without a certificate (CSC_LINK / WIN_CSC_LINK) signing is
+  # skipped and the installer is UNSIGNED. The signing pipeline is documented in
+  # docs/product/deployment-and-release.md §7; it is not set up yet.
   signAndEditExecutable: true
   legalTrademarks: AirDesk
 nsis:

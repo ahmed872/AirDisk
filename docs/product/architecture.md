@@ -54,7 +54,7 @@ Packages: `packages/domain` (pure rules), `packages/contracts` (zod command sche
 
 ## 4. Scope boundary (important)
 
-AirDesk is a **record-management** system for ticket offices. Ticket records store the PNR, ticket numbers, flights, supplier, purchase cost and customer price of transactions made in a GDS/airline portal/consolidator. There is no flight search, availability, seat reservation, PNR creation, ticket issuance or airline API integration. "Confirm ticketed" records that the ticket was issued elsewhere and posts the sale and purchase.
+AirDesk is a **record-management** system for ticket offices. Ticket records store the PNR, ticket numbers, flights, supplier, purchase cost and customer price of transactions made in a GDS/airline portal/consolidator. There is no flight search, availability, seat reservation, PNR creation, ticket issuance, and no connection to any GDS, airline or consolidator system. "Confirm ticketed" records that the ticket was issued elsewhere and posts the sale and purchase.
 
 ## 5. External integrations
 

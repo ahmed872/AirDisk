@@ -6,6 +6,9 @@ Generated from `SYSTEM_ROLES` / `PERMISSIONS` in `packages/domain/src/security/p
 - Without `booking.view_all` a user sees only ticket records they created or sell (others read as *not found*).
 - Cost, profit and supplier balances are removed from responses without `booking.view_cost`, `booking.view_profit` or `supplier.view_financial`.
 - Passport/national-ID data needs `customer.view_identity`.
+- Cancellation details hide the expected supplier refund and supplier-side documents without `booking.view_cost`.
+- Reports and their permission: sales `report.sales`, purchases `report.purchases`, profit `report.profit`, receivables and collections `report.receivables`, payables `report.payables`, supplier volume `report.supplier_performance`, expenses `report.expenses`, refunds and cancellations `report.refunds`, flight changes `report.schedule_changes` (own records only without `booking.view_all`), employee activity `report.employee_activity`, cash & bank book `treasury.view`.
+- Correcting an already recorded ticket number needs `booking.adjust_price` and a reason (audited as `ticket.number_corrected`).
 
 **Permissions not used by any command yet:** `booking.void` (a void is recorded as a cancellation request of type VOID, which uses `refund.request` / `refund.manage`) and `template.manage` (no editable message/print templates yet). `settings.system` currently controls only the automatic-backup schedule.
 

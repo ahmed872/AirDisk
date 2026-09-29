@@ -1,5 +1,7 @@
 # AirDesk 1.0.0-rc.1 — Product documentation
 
+> AirDesk records and manages airline-ticket transactions booked and issued **outside** the system. It does **not** search flights, reserve seats, create PNRs, issue tickets, or connect to any GDS, airline or consolidator system.
+
 | Document | For | Language |
 |---|---|---|
 | [user-guide-ar.md](user-guide-ar.md) | Office staff: installation, first run, users/roles, customers, suppliers, airlines, airports, ticket records, payments, schedule changes, reissue, cancellations/refunds, expenses, treasury, opening balances, reports, backup/restore, audit, company settings, troubleshooting | العربية |
@@ -10,6 +12,8 @@
 | [financial-model.md](financial-model.md) | Accounts, documents, posting rules P1–P12, business limits, derived figures | English |
 | [performance.md](performance.md) | Representative-office dataset and measurements | English |
 | [deployment-and-release.md](deployment-and-release.md) | Build, CI gates, versioning, update readiness, release checklist, white-label | English |
+| [encryption-plan.md](encryption-plan.md) | Encryption at rest: status, verified library behaviour, exact implementation steps | English |
+| [release-audit.md](release-audit.md) | Final pre-release audit report (A–L), release recommendation | English |
 | [final-report.md](final-report.md) | Product completion report (A–N) | English |
 
 Earlier phase reports: [Phase 0 specification](../phase-0/README.md) · [Phase 1](../phase-1/README.md) · [Phase 2](../phase-2/README.md).

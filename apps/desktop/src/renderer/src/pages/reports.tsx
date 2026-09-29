@@ -16,6 +16,7 @@ const REPORTS: { id: string; perm: string }[] = [
   { id: 'receivables', perm: 'report.receivables' }, { id: 'payables', perm: 'report.payables' }, { id: 'supplier_volume', perm: 'report.supplier_performance' },
   { id: 'collections', perm: 'report.receivables' }, { id: 'expenses', perm: 'report.expenses' }, { id: 'refunds', perm: 'report.refunds' },
   { id: 'cancellations', perm: 'report.refunds' }, { id: 'flight_changes', perm: 'report.schedule_changes' }, { id: 'employee_activity', perm: 'report.employee_activity' },
+  { id: 'cash_book', perm: 'treasury.view' },
 ];
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

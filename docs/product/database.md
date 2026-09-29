@@ -29,6 +29,8 @@ Upgrade path verified by tests: a Phase 2 database (schema 2) with real data is 
 | Money | `fin_document`, `fin_document_line`, `journal_entry`, `journal_line` |
 | Operations | `audit_log` (hash chain), `backup_record`, `search_index` (FTS5 trigram) |
 
+**Seeded reference data:** currencies EGP, SAR, AED, KWD, USD, EUR (active) and QAR, OMR, BHD, JOD, IQD, LYD, TND, MAD, GBP, TRY (inactive until chosen as base currency or activated in settings), system roles and permissions, chart of accounts, ~80 airports. No demo customers, suppliers, users or company data are seeded.
+
 ## 3. Integrity rules in the database
 
 - **Immutability:** `fin_document`, `fin_document_line`, `journal_line` and sealed `journal_entry` reject UPDATE/DELETE; `audit_log` is append-only.

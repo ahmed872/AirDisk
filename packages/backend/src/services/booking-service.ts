@@ -41,7 +41,7 @@ import type {
 import type { CompanyService } from './company-service';
 import { actorOf, hasAny, requirePermission, tx, type Actor, type ServiceDeps } from './context';
 import type { CurrencyService } from './currency-service';
-import { documentSide, readDocuments } from './document-reader';
+import { SUPPLIER_DOC_TYPES, documentSide, readDocuments } from './document-reader';
 import { indexForSearch, maskIdentifier, nextSequenceNumber, searchClause } from './masterdata-support';
 import type { PostingService } from './posting-service';
 import type { ReferenceService } from './reference-service';
@@ -280,7 +280,7 @@ export class BookingService {
       suppliers: viewCost || hasAny(actor, 'supplier.view_financial') ? this.supplierPositions(id) : null,
       profit: viewProfit ? { netSalesBaseMinor: fin.net_sales_base_minor, netCostBaseMinor: fin.net_cost_base_minor, grossProfitBaseMinor: fin.gross_profit_base_minor } : null,
       documents: docs,
-      cancellations: this.cancellations(id, paxName),
+      cancellations: this.cancellations(id, viewCost, paxName),
       scheduleChanges: changes,
       notifications: this.notifications(id),
       statusHistory: (db.prepare(`SELECT h.from_status, h.to_status, h.changed_at, u.display_name AS by_name, h.reason FROM booking_status_history h
@@ -732,20 +732,31 @@ export class BookingService {
     return this.get(actor, id);
   }
 
-  setTicketNumber(actor: Actor, bookingId: string, ticketId: string, ticketNumber: string): BookingDto {
+  /**
+   * Records the ticket number of an externally issued ticket (once), or corrects a
+   * mistyped number: a correction needs booking.adjust_price and a reason, keeps
+   * the number unique and is audited with the old and new values.
+   */
+  setTicketNumber(actor: Actor, bookingId: string, ticketId: string, ticketNumber: string, correctionReason?: string | null): BookingDto {
     requirePermission(this.deps, actor, ['booking.issue', 'booking.edit'], 'bookings.setTicketNumber');
+    const correcting = !!correctionReason?.trim();
+    if (correcting) requirePermission(this.deps, actor, 'booking.adjust_price', 'bookings.correctTicketNumber');
     tx(this.deps, () => {
       this.accessible(actor, bookingId);
       const t = this.deps.db.prepare('SELECT t.*, a.ticket_prefix FROM ticket t LEFT JOIN airline a ON a.id = t.validating_airline_id WHERE t.id = ? AND t.booking_id = ?').get(ticketId, bookingId) as
         { ticket_number: string | null; ticket_prefix: string | null } | undefined;
       if (!t) throw new DomainError(ErrorCode.NOT_FOUND, 'Ticket not found');
-      if (t.ticket_number) throw new DomainError(ErrorCode.CONFLICT, 'The ticket number is already recorded', { reason: 'TICKET_NUMBER_SET' });
+      if (t.ticket_number && !correcting) throw new DomainError(ErrorCode.CONFLICT, 'The ticket number is already recorded', { reason: 'TICKET_NUMBER_SET' });
       const n = normalizeTicketNumber(ticketNumber, t.ticket_prefix);
       if (!n) throw fieldError('ticketNumber', 'REQUIRED', 'Ticket number is required');
       if (this.deps.db.prepare('SELECT 1 FROM ticket WHERE ticket_number = ?').get(n)) throw fieldError('ticketNumber', 'DUPLICATE_TICKET', 'This ticket number already exists');
       this.deps.db.prepare('UPDATE ticket SET ticket_number = ?, updated_at = ?, row_version = row_version + 1 WHERE id = ?').run(n, this.deps.clock.now().toISOString(), ticketId);
       this.deps.db.prepare('UPDATE booking_price_item SET ticket_number = ? WHERE ticket_id = ?').run(n, ticketId);
-      this.deps.audit.append(actorOf(actor), { action: 'ticket.number_recorded', entityType: 'ticket', entityId: ticketId, after: { ticketNumber: n }, metadata: { bookingId } });
+      this.deps.audit.append(actorOf(actor), {
+        action: t.ticket_number ? 'ticket.number_corrected' : 'ticket.number_recorded', entityType: 'ticket', entityId: ticketId,
+        before: t.ticket_number ? { ticketNumber: t.ticket_number } : undefined, after: { ticketNumber: n },
+        metadata: t.ticket_number ? { bookingId, reason: requiredText(correctionReason, 'correctionReason', 500) } : { bookingId },
+      });
       this.reindex(bookingId);
     });
     return this.get(actor, bookingId);
@@ -1132,7 +1143,12 @@ export class BookingService {
     }));
   }
 
-  cancellations(bookingId: string, paxName?: Map<string, string>): CancellationDto[] {
+  /**
+   * Cancellation requests of a record. Without cost visibility the supplier side
+   * (expected supplier refund, supplier credit notes and penalty bills) is
+   * removed: those amounts reveal the purchase cost.
+   */
+  cancellations(bookingId: string, viewCost: boolean, paxName?: Map<string, string>): CancellationDto[] {
     const db = this.deps.db;
     const rows = db.prepare(`SELECT cr.*, b.booking_no, u.display_name AS by_name FROM cancellation_request cr JOIN booking b ON b.id = cr.booking_id
                              LEFT JOIN app_user u ON u.id = cr.requested_by WHERE cr.booking_id = ? ORDER BY cr.requested_at`).all(bookingId) as {
@@ -1148,9 +1164,11 @@ export class BookingService {
       id: r.id, requestNo: r.request_no, bookingId: r.booking_id, bookingNo: r.booking_no, cancelType: r.cancel_type, scope: r.scope,
       overallStatus: r.overall_status, supplierStatus: r.supplier_status, customerStatus: r.customer_status,
       tickets: (items.all(r.id) as { ticket_id: string; ticket_number: string | null; n: string }[]).map((i) => ({ ticketId: i.ticket_id, ticketNumber: i.ticket_number, passengerName: paxName?.get(i.ticket_id) ?? i.n })),
-      expectedSupplierRefund: r.expected_supplier_refund_minor !== null && r.expected_currency_code ? { currency: r.expected_currency_code, minor: r.expected_supplier_refund_minor } : null,
+      expectedSupplierRefund: viewCost && r.expected_supplier_refund_minor !== null && r.expected_currency_code ? { currency: r.expected_currency_code, minor: r.expected_supplier_refund_minor } : null,
       reason: r.reason, requestedAt: r.requested_at, requestedBy: r.by_name, closedAt: r.closed_at, notes: r.notes,
-      documents: (docs.all(r.id) as { id: string; doc_no: string; doc_type: string; total_minor: number; currency_code: string }[]).map((d) => ({ id: d.id, docNo: d.doc_no, docType: d.doc_type, totalMinor: d.total_minor, currency: d.currency_code })),
+      documents: (docs.all(r.id) as { id: string; doc_no: string; doc_type: string; total_minor: number; currency_code: string }[])
+        .filter((d) => viewCost || !SUPPLIER_DOC_TYPES.includes(d.doc_type))
+        .map((d) => ({ id: d.id, docNo: d.doc_no, docType: d.doc_type, totalMinor: d.total_minor, currency: d.currency_code })),
       rowVersion: r.row_version,
     }));
   }

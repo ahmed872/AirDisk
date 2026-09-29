@@ -333,7 +333,7 @@ export const commandSchemas = {
       costExchangeRates: z.record(currencyCode, rateText).optional().nullable(),
     })
     .strict(),
-  'bookings.setTicketNumber': z.object({ bookingId: ulid, ticketId: ulid, ticketNumber: text(20) }).strict(),
+  'bookings.setTicketNumber': z.object({ bookingId: ulid, ticketId: ulid, ticketNumber: text(20), correctionReason: s(500) }).strict(),
   'bookings.adjustSale': z
     .object({
       bookingId: ulid, ticketId: ulid.optional().nullable(), kind: z.enum(['INCREASE', 'DECREASE']),
@@ -439,7 +439,7 @@ export const commandSchemas = {
   'aging.get': z.object({ party: z.enum(['CUSTOMER', 'SUPPLIER']), asOf: isoDate }).strict(),
   'reports.run': z
     .object({
-      report: z.enum(['sales', 'purchases', 'profit', 'receivables', 'payables', 'supplier_volume', 'expenses', 'refunds', 'cancellations', 'flight_changes', 'employee_activity', 'collections']),
+      report: z.enum(['sales', 'purchases', 'profit', 'receivables', 'payables', 'supplier_volume', 'expenses', 'refunds', 'cancellations', 'flight_changes', 'employee_activity', 'collections', 'cash_book']),
       from: isoDate, to: isoDate,
     })
     .strict(),

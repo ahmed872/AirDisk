@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, normalize } from 'node:path';
 import { ChartOfAccounts, DomainError, ErrorCode } from '@airdesk/domain';
 import type { BackupRecordDto, IntegrityReportDto } from '@airdesk/contracts';
 import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
@@ -250,6 +250,10 @@ export class AppBackend {
   async createBackup(actor: Actor | null, kind: BackupKind, destinationDir?: string): Promise<BackupResult> {
     if (actor) requirePermission(this.services.deps, actor, 'backup.create', 'backup.create');
     // The finished .adbk may go to a USB/network folder; the working snapshot always stays on the local data disk.
+    // A chosen destination must be an absolute folder path (no relative or '..' tricks).
+    if (destinationDir !== undefined && (!isAbsolute(destinationDir) || normalize(destinationDir).split(/[\\/]/).includes('..'))) {
+      throw new DomainError(ErrorCode.VALIDATION, 'The backup folder must be a full path', { field: 'destinationDir', reason: 'INVALID_PATH' });
+    }
     const dest = destinationDir ?? this.backupDir;
     const startedAt = this.opts.clock.now().toISOString();
     const deps = this.services.deps;

@@ -88,13 +88,3 @@ export function DashboardPage({ user, canMetrics, go }: { user: SessionUserDto; 
     </div>
   );
 }
-
-export function ComingSoonPage({ title }: { title: TKey }) {
-  const { t } = useI18n();
-  return (
-    <div className="page" data-testid="page-coming-soon">
-      <PageHeader title={t(title)} />
-      <div className="empty"><span className="badge muted">{t('comingSoon')}</span><p>{t('comingSoonText')}</p></div>
-    </div>
-  );
-}

@@ -131,6 +131,13 @@ export function PaymentDialog({ kind, partyId, partyName, currency: initialCurre
           </table>
         </>
       )}
+      {(() => {
+        // Money going out of a cash box/wallet cannot exceed what it holds in real life: warn (the office may be entering payments out of order).
+        const acc = usable.find((a) => a.id === accountId);
+        const outflow = kind === 'refundCustomer' || kind === 'paySupplier';
+        return outflow && acc && acc.balanceMinor !== null && (acc.accountType === 'CASH' || acc.accountType === 'WALLET') && (amount ?? 0) > acc.balanceMinor
+          ? <Alert kind="warn">{t('cashWillBeNegative')}: <span className="ltr">{m.fmt(acc.balanceMinor, acc.currencyCode)}</span></Alert> : null;
+      })()}
       {onAccountDueMinor > 0 && <p className="hint">{t('onAccountDue')}: <span className="ltr">{m.fmt(onAccountDueMinor, currency)}</span></p>}
       {onAccountMinor > 0 && (
         <Alert kind={overpaid === 0 ? 'ok' : canOnAccount ? 'warn' : 'error'}>{t('onAccount')}: <span className="ltr">{m.fmt(onAccountMinor, currency)}</span>{overpaid > 0 && !canOnAccount && ` — ${t('noPermission')}`}</Alert>
