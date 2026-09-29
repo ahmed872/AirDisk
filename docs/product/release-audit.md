@@ -165,7 +165,7 @@ The earlier "13 s first-step stall" reproduces only in that perf worker, not in 
 | E2E foundation | passed |
 | E2E Phase 2 | 20/20 passed |
 | E2E operations (1366×768 + 1920×1080, AR + EN, real keyboard typing) | 14/14 steps passed |
-| CI Linux + Windows on `59c3634` | see §K |
+| CI Linux + Windows on `59c3634` | **run 21: both jobs green.** Linux: typecheck, lint, tests + coverage, build, smoke, 3 E2E suites. Windows: tests, NSIS build, silent install, version info, packaged launch, packaged smoke, real-directory setup, uninstall keeps data, reinstall verify. |
 
 New test files:
 - `release-audit.test.ts` (9 tests);
@@ -176,7 +176,7 @@ New test files:
 
 - **Audit code and docs:** `59c3634` ("Pre-release audit: hardening fixes, cash & bank book, docs").
 - **This report:** the following docs-only commit on the same branch.
-- **CI:** run 21 (for `59c3634`); the result is recorded below.
+- **CI:** run 21 for `59c3634`, success on Linux and Windows ([run](https://github.com/ahmed872/AirDisk/actions/runs/36542822875)). Later docs-only commits run the same workflow.
 
 ## L. Release recommendation
 
