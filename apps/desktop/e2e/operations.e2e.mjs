@@ -248,6 +248,27 @@ try {
     await win.waitForFunction(() => /1,500\.00/.test(document.querySelector('[data-testid=open-items]')?.textContent ?? ''));
   });
 
+  await step('reissue-date-change', async () => {
+    await win.fill('[data-testid=global-search]', 'CRD123');
+    await win.click('[data-testid=global-results] [data-hit=booking]');
+    await win.waitForSelector('[data-testid=page-record]');
+    await win.click('[data-testid=reissue-ticket]');
+    await win.waitForSelector('[data-testid=reissue-dialog]');
+    await win.fill('[data-testid=ri-number]', '0779990001112');
+    await win.fill('[data-testid=ri-fee]', '300');
+    await win.fill('[data-testid=ri-penalty]', '150');
+    await win.fill('[data-testid=ri-dep-1]', '2026-12-05');
+    await win.fill('[data-testid=ri-arr-1]', '2026-12-05');
+    await win.fill('[data-testid=ri-reason]', 'العميل غيّر الموعد إلى 5 ديسمبر');
+    await shot('reissue-dialog');
+    await saveDialog();
+    await win.waitForSelector('[data-testid=tickets-table] tr[data-ticket=EXCHANGED]');
+    assert.match(await text('[data-testid=tickets-table]'), /0779990001112/);
+    assert.match(await text('[data-testid=tickets-table]'), /مستبدلة/);
+    await win.waitForFunction(() => /1,800\.00/.test(document.querySelector('[data-testid=acc-remaining]')?.textContent ?? '')); // 1,500 open + 300 change fee
+    assert.equal(await win.locator('[data-testid=schedule-banner]').count(), 0, 'a customer-requested change raises no notification alert');
+  });
+
   await step('global-search-and-english', async () => {
     await win.fill('[data-testid=global-search]', 'ABC123');
     await win.click('[data-testid=global-results] [data-hit=booking]');

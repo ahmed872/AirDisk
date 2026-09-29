@@ -121,6 +121,8 @@ export interface DocumentDraft {
   counterMoneyAccountId?: string | null;
   paymentMethod?: PaymentMethod | null;
   paymentReference?: string | null;
+  /** The supplier's / airline's own reference (ADM, refund notice, invoice no.). Set once at posting, never edited. */
+  externalReference?: string | null;
   reasonCode?: string | null;
   description?: string | null;
   cancellationRequestId?: string | null;

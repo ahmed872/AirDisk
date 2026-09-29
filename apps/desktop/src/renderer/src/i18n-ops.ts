@@ -450,6 +450,14 @@ export const OPS = {
   creditSource: ['مصدر الرصيد', 'Credit from'],
   applyCreditHint: ['يُستخدم رصيد العميل/المورد الدائن لسداد سجلات أخرى له. لا تتحرك نقدية ولا يتغير الربح.', "Uses the party's credit to settle their other records. No cash moves and profit does not change."],
   onAccountDue: ['مستحق على الحساب', 'Owed on account'],
+  reissue: ['إعادة إصدار', 'Reissue'],
+  reissueHint: ['سجّل هنا إعادة إصدار تمت بالفعل لدى شركة الطيران أو المورد (مثل تغيير الموعد بطلب العميل). تصبح التذكرة القديمة "مستبدلة" وتُسجَّل الفروق فقط.', 'Record a reissue the airline or supplier already made (e.g. a date change the customer asked for). The old ticket becomes "exchanged" and only the differences are posted.'],
+  newTicketNumber: ['رقم التذكرة الجديد', 'New ticket number'],
+  fareDifference: ['فرق السعر على العميل', 'Fare difference (customer)'],
+  additionalCost: ['تكلفة إضافية من المورد', 'Additional supplier cost'],
+  flightsAfterReissue: ['الرحلات بعد إعادة الإصدار', 'Flights after the reissue'],
+  replaces: ['بدلًا من', 'Replaces'],
+  route: ['المسار', 'Route'],
 } as const satisfies Record<string, readonly [string, string]>;
 
 export const OPS_REASONS = {

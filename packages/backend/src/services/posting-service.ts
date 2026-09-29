@@ -51,6 +51,7 @@ interface DocRow {
   id: string; doc_type: DocType; doc_no: string; doc_date: string; is_reversal: number; reversal_of_id: string | null;
   customer_id: string | null; supplier_id: string | null; booking_id: string | null; cancellation_request_id: string | null;
   money_account_id: string | null; counter_money_account_id: string | null; payment_method: PaymentMethod | null; payment_reference: string | null;
+  external_reference: string | null;
   currency_code: string; exchange_rate: string; total_minor: number; total_base_minor: number;
   reason_code: string | null; description: string | null; created_at: string; created_by: string;
 }
@@ -123,6 +124,7 @@ export class PostingService {
         counterMoneyAccountId: current.counterMoneyAccountId,
         paymentMethod: current.paymentMethod,
         paymentReference: original.payment_reference,
+        externalReference: original.external_reference,
         cancellationRequestId: original.cancellation_request_id,
         reasonCode: 'REVERSAL',
         description: input.reason.trim(),
@@ -215,17 +217,17 @@ export class PostingService {
     const docNo = this.nextNumber(doc.docType, doc.docDate);
     db.prepare(
       `INSERT INTO fin_document (id, doc_type, doc_no, doc_date, is_reversal, reversal_of_id, customer_id, supplier_id, booking_id,
-         cancellation_request_id, money_account_id, counter_money_account_id, payment_method, payment_reference, currency_code, exchange_rate, total_minor,
+         cancellation_request_id, money_account_id, counter_money_account_id, payment_method, payment_reference, external_reference, currency_code, exchange_rate, total_minor,
          total_base_minor, reason_code, description, created_at, created_by)
        VALUES (@id, @docType, @docNo, @docDate, @isReversal, @reversalOfId, @customerId, @supplierId, @bookingId, @cancellationRequestId,
-         @moneyAccountId, @counterMoneyAccountId, @paymentMethod, @paymentReference, @currency, @exchangeRate, @totalMinor, @totalBaseMinor, @reasonCode,
+         @moneyAccountId, @counterMoneyAccountId, @paymentMethod, @paymentReference, @externalReference, @currency, @exchangeRate, @totalMinor, @totalBaseMinor, @reasonCode,
          @description, @now, @userId)`,
     ).run({
       id: docId, docType: doc.docType, docNo, docDate: doc.docDate, isReversal: rev.isReversal ? 1 : 0, reversalOfId: rev.reversalOfId,
       customerId: doc.customerId ?? null, supplierId: doc.supplierId ?? null, bookingId: doc.bookingId ?? null,
       cancellationRequestId: doc.cancellationRequestId ?? null, moneyAccountId: doc.moneyAccountId ?? null,
       counterMoneyAccountId: doc.counterMoneyAccountId ?? null,
-      paymentMethod: doc.paymentMethod ?? null, paymentReference: doc.paymentReference ?? null, currency: doc.currency,
+      paymentMethod: doc.paymentMethod ?? null, paymentReference: doc.paymentReference ?? null, externalReference: doc.externalReference ?? null, currency: doc.currency,
       exchangeRate: doc.exchangeRate, totalMinor: doc.totalMinor, totalBaseMinor: doc.totalBaseMinor,
       reasonCode: doc.reasonCode ?? null, description: doc.description ?? null, now, userId: actor.userId,
     });

@@ -493,8 +493,7 @@ export class FinanceService {
       for (const [supplierId, g] of bySupplier) {
         const common = { docDate: date, supplierId, bookingId: r.booking_id, currency: g.currency, exchangeRate: this.bookings.rateForDoc(g.currency, date, null), cancellationRequestId: id, description: r.request_no };
         if (g.returns.length) {
-          const d = this.posting.post(actor, { ...common, docType: 'SUPPLIER_CREDIT_NOTE', reasonCode: 'CANCELLATION', lines: g.returns });
-          if (input.externalReference) this.deps.db.prepare('UPDATE fin_document SET external_reference = ? WHERE id = ? AND external_reference IS NULL').run(optionalText(input.externalReference, 'externalReference', 60), d.id);
+          this.posting.post(actor, { ...common, docType: 'SUPPLIER_CREDIT_NOTE', reasonCode: 'CANCELLATION', lines: g.returns, externalReference: optionalText(input.externalReference, 'externalReference', 60) });
         }
         if (g.penalties.length) this.posting.post(actor, { ...common, docType: 'SUPPLIER_BILL', reasonCode: 'SUPPLIER_PENALTY', lines: g.penalties });
       }

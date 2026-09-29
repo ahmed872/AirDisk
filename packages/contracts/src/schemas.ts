@@ -347,6 +347,14 @@ export const commandSchemas = {
   'bookings.changeSupplier': z
     .object({ bookingId: ulid, ticketId: ulid, newSupplierId: ulid, costMinor: z.number().int().min(0).max(MAX_MINOR), costCurrency: currencyCode, reason: text(500), date: isoDate.optional().nullable() })
     .strict(),
+  'bookings.reissue': z
+    .object({
+      bookingId: ulid, ticketId: ulid, rowVersion: z.number().int().min(1), newTicketNumber: z.string().trim().max(20).optional().nullable(),
+      fareDifferenceMinor: z.number().int().min(0).max(MAX_MINOR).optional(), changeFeeMinor: z.number().int().min(0).max(MAX_MINOR).optional(), additionalCostMinor: z.number().int().min(0).max(MAX_MINOR).optional(), supplierPenaltyMinor: z.number().int().min(0).max(MAX_MINOR).optional(),
+      segments: z.array(z.object({ segmentId: ulid, segment: segmentInput }).strict()).max(20).optional(),
+      reason: text(500), date: isoDate.optional().nullable(), externalReference: optText(60),
+    })
+    .strict(),
 
   'payments.receive': paymentInput,
   'payments.refundCustomer': paymentInput,

@@ -470,6 +470,9 @@ export interface TicketDto {
   status: 'ISSUED' | 'VOIDED' | 'EXCHANGED' | 'REFUNDED' | 'PARTIALLY_REFUNDED' | 'USED';
   issueDate: string;
   notes: string | null;
+  /** Reissue/exchange: the ticket this one replaced. */
+  exchangedFromId: string | null;
+  exchangedFromNumber: string | null;
   /** Net sale on this ticket (sale currency), derived from documents. */
   saleMinor: number;
   saleCurrency: string;

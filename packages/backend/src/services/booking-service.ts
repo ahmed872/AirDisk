@@ -24,6 +24,7 @@ import {
   requiresAttention,
   saleTotal,
   settlementStatus,
+  ticketTransition,
   type BookingStatus,
   type ChangeNotificationStatus,
   type DocumentLineDraft,
@@ -45,6 +46,25 @@ import { indexForSearch, maskIdentifier, nextSequenceNumber, searchClause } from
 import type { PostingService } from './posting-service';
 import type { ReferenceService } from './reference-service';
 import { readSetting } from './settings';
+
+/** A ticket and every ticket it replaced (reissue/exchange chain): refunds and cost changes follow the whole chain. */
+const TICKET_CHAIN = `(WITH RECURSIVE chain(id, prev) AS (SELECT id, exchanged_from_ticket_id FROM ticket WHERE id = ?
+                        UNION ALL SELECT t.id, t.exchanged_from_ticket_id FROM ticket t JOIN chain c ON t.id = c.prev) SELECT id FROM chain)`;
+
+export interface ReissueInput {
+  ticketId: string;
+  rowVersion: number;
+  newTicketNumber?: string | null;
+  fareDifferenceMinor?: number;
+  changeFeeMinor?: number;
+  additionalCostMinor?: number;
+  supplierPenaltyMinor?: number;
+  /** Flights as reissued (customer-requested change): recorded with history, no customer notification needed. */
+  segments?: { segmentId: string; segment: SegmentInput }[];
+  reason: string;
+  date?: string | null;
+  externalReference?: string | null;
+}
 
 export interface BookingRow {
   id: string; booking_no: string; customer_id: string; status: BookingStatus; booking_date: string; issue_date: string | null; due_date: string | null;
@@ -697,8 +717,8 @@ export class BookingService {
         const posted = this.posting.post(actor, {
           docType: 'SUPPLIER_BILL', docDate: date, supplierId: bill.supplierId, bookingId: id, currency: bill.currency,
           exchangeRate: rateFor(bill.currency, input.costExchangeRates?.[bill.currency]), lines: bill.lines, description: `${b.booking_no}`,
+          externalReference: refs ? refs.slice(0, 200) : null,
         });
-        if (refs) db.prepare('UPDATE fin_document SET external_reference = ? WHERE id = ? AND external_reference IS NULL').run(refs, posted.id);
         docs.push(posted.docNo);
       }
       const terms = (db.prepare('SELECT payment_terms_days FROM customer WHERE id = ?').get(b.customer_id) as { payment_terms_days: number }).payment_terms_days;
@@ -781,10 +801,97 @@ export class BookingService {
       const doc = this.posting.post(actor, {
         docType: input.kind === 'INCREASE' ? 'SUPPLIER_BILL' : 'SUPPLIER_CREDIT_NOTE', docDate: date, supplierId: t.supplier_id, bookingId, currency: cur,
         exchangeRate: this.rateForDoc(cur, date, null), reasonCode: 'COST_ADJUSTMENT', description: reason,
+        externalReference: optionalText(input.externalReference, 'externalReference', 60),
         lines: [{ lineType: input.kind === 'INCREASE' ? (input.lineType ?? 'PURCHASE_COST') : 'PURCHASE_RETURN', amountMinor: input.amountMinor, bookingId, passengerId: t.passenger_id, ticketId: t.id, description: reason }],
       });
-      if (input.externalReference) this.deps.db.prepare('UPDATE fin_document SET external_reference = ? WHERE id = ? AND external_reference IS NULL').run(optionalText(input.externalReference, 'externalReference', 60), doc.id);
       this.deps.audit.append(actorOf(actor), { action: 'booking.cost_adjusted', entityType: 'booking', entityId: bookingId, metadata: { kind: input.kind, document: doc.docNo, reason } });
+      this.touch(actor, bookingId);
+    });
+    return this.get(actor, bookingId);
+  }
+
+  /**
+   * FR-REF-06 reissue / exchange, recorded after the airline or consolidator
+   * reissued the ticket OUTSIDE AirDesk: the old ticket becomes EXCHANGED and a
+   * new ticket (with its new number, if known) replaces it; the new flights are
+   * recorded as a customer-requested change (history kept, no notification
+   * needed); the fare difference and change fee are invoiced and any extra
+   * supplier cost or penalty is billed on the new ticket. Nothing is re-posted.
+   */
+  reissue(actor: Actor, bookingId: string, input: ReissueInput): BookingDto {
+    requirePermission(this.deps, actor, 'booking.reissue', 'bookings.reissue');
+    const extraCost = (input.additionalCostMinor ?? 0) + (input.supplierPenaltyMinor ?? 0);
+    if (extraCost > 0) requirePermission(this.deps, actor, 'booking.enter_cost', 'bookings.reissue.cost');
+    if (input.segments?.length) requirePermission(this.deps, actor, 'schedule.change', 'bookings.reissue.flights');
+    const date = input.date ?? this.company.today();
+    this.posting.assertBackdateAllowed(actor, date);
+    const reason = requiredText(input.reason, 'reason', 500);
+    let newTicketId = '';
+    tx(this.deps, () => {
+      const db = this.deps.db;
+      const b = this.accessible(actor, bookingId);
+      this.assertVersion(b, input.rowVersion);
+      if (b.status !== 'ISSUED' && b.status !== 'PARTIALLY_CANCELLED') throw new DomainError(ErrorCode.CONFLICT, 'Only ticketed records can be reissued', { reason: 'NOT_ISSUED' });
+      const t = db.prepare('SELECT t.*, a.ticket_prefix FROM ticket t LEFT JOIN airline a ON a.id = t.validating_airline_id WHERE t.id = ? AND t.booking_id = ?').get(input.ticketId, bookingId) as
+        { id: string; passenger_id: string; supplier_id: string; validating_airline_id: string | null; ticket_number: string | null; ticket_prefix: string | null; status: TicketStatus } | undefined;
+      if (!t) throw fieldError('ticketId', 'NOT_FOUND', 'Ticket not found');
+      ticketTransition(t.status, 'EXCHANGE');
+      if (db.prepare(`SELECT 1 FROM cancellation_item ci JOIN cancellation_request cr ON cr.id = ci.cancellation_request_id WHERE ci.ticket_id = ? AND cr.overall_status = 'OPEN'`).get(t.id)) {
+        throw new DomainError(ErrorCode.CONFLICT, 'The ticket is part of an open cancellation request', { reason: 'TICKET_IN_CANCELLATION' });
+      }
+      const number = input.newTicketNumber ? normalizeTicketNumber(input.newTicketNumber, t.ticket_prefix) : null;
+      if (number && db.prepare('SELECT 1 FROM ticket WHERE ticket_number = ?').get(number)) throw fieldError('newTicketNumber', 'DUPLICATE_TICKET', 'This ticket number already exists');
+      const segs = (db.prepare('SELECT segment_id FROM ticket_segment WHERE ticket_id = ?').all(t.id) as { segment_id: string }[]).map((r) => r.segment_id);
+
+      // Flights as reissued: tracked like any post-issue change, then marked as confirmed with the customer (they asked for it).
+      for (const change of input.segments ?? []) {
+        if (!segs.includes(change.segmentId)) throw fieldError('segments', 'NOT_FOUND', 'The flight is not on this ticket');
+        this.saveSegment(actor, bookingId, change.segmentId, change.segment, { reason: `Reissue: ${reason}` });
+        const created = db.prepare(`SELECT id FROM schedule_change WHERE segment_id = ? AND superseded_by_id IS NULL AND notification_status = 'NOT_NOTIFIED'
+                                    ORDER BY segment_version_after DESC LIMIT 1`).get(change.segmentId) as { id: string } | undefined;
+        if (created) {
+          db.prepare(`UPDATE schedule_change SET notification_status = 'MANUALLY_CONFIRMED', status_updated_at = ?, status_updated_by = ?, confirmation_note = ?,
+                        customer_response = 'REQUESTED_CHANGE', row_version = row_version + 1 WHERE id = ?`)
+            .run(this.deps.clock.now().toISOString(), actor.userId, `Customer-requested reissue: ${reason}`.slice(0, 500), created.id);
+        }
+      }
+
+      const now = this.deps.clock.now().toISOString();
+      newTicketId = this.deps.newId();
+      db.prepare(`INSERT INTO ticket (id, booking_id, passenger_id, ticket_number, validating_airline_id, supplier_id, status, issue_date, exchanged_from_ticket_id, created_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, 'ISSUED', ?, ?, ?, ?)`)
+        .run(newTicketId, bookingId, t.passenger_id, number, t.validating_airline_id, t.supplier_id, date, t.id, now, now);
+      const link = db.prepare('INSERT INTO ticket_segment (ticket_id, segment_id) VALUES (?, ?)');
+      for (const sid of segs) link.run(newTicketId, sid);
+      db.prepare(`UPDATE ticket SET status = 'EXCHANGED', updated_at = ?, row_version = row_version + 1 WHERE id = ?`).run(now, t.id);
+
+      const docs: string[] = [];
+      const saleLines: DocumentLineDraft[] = [];
+      if ((input.fareDifferenceMinor ?? 0) > 0) saleLines.push({ lineType: 'FARE', amountMinor: input.fareDifferenceMinor!, bookingId, passengerId: t.passenger_id, ticketId: newTicketId, description: reason });
+      if ((input.changeFeeMinor ?? 0) > 0) saleLines.push({ lineType: 'CHANGE_FEE', amountMinor: input.changeFeeMinor!, bookingId, passengerId: t.passenger_id, ticketId: newTicketId, description: reason });
+      if (saleLines.length) {
+        docs.push(this.posting.post(actor, {
+          docType: 'CUSTOMER_INVOICE', docDate: date, customerId: b.customer_id, bookingId, currency: b.sale_currency_code,
+          exchangeRate: this.rateForDoc(b.sale_currency_code, date, b.sale_exchange_rate), reasonCode: 'REISSUE', description: reason, lines: saleLines,
+        }).docNo);
+      }
+      const costLines: DocumentLineDraft[] = [];
+      if ((input.additionalCostMinor ?? 0) > 0) costLines.push({ lineType: 'PURCHASE_COST', amountMinor: input.additionalCostMinor!, bookingId, passengerId: t.passenger_id, ticketId: newTicketId, description: reason });
+      if ((input.supplierPenaltyMinor ?? 0) > 0) costLines.push({ lineType: 'SUPPLIER_PENALTY', amountMinor: input.supplierPenaltyMinor!, bookingId, passengerId: t.passenger_id, ticketId: newTicketId, description: reason });
+      if (costLines.length) {
+        const cur = this.costCurrency(t.id) ?? this.company.core().baseCurrency;
+        const bill = this.posting.post(actor, {
+          docType: 'SUPPLIER_BILL', docDate: date, supplierId: t.supplier_id, bookingId, currency: cur,
+          exchangeRate: this.rateForDoc(cur, date, null), reasonCode: 'REISSUE', description: reason, lines: costLines,
+          externalReference: optionalText(input.externalReference, 'externalReference', 60),
+        });
+        docs.push(bill.docNo);
+      }
+      this.deps.audit.append(actorOf(actor), { action: 'ticket.status_changed', entityType: 'ticket', entityId: t.id, before: { status: t.status }, after: { status: 'EXCHANGED' }, metadata: { bookingId, replacedBy: newTicketId } });
+      this.deps.audit.append(actorOf(actor), {
+        action: 'ticket.reissued', entityType: 'ticket', entityId: newTicketId,
+        after: { ticketNumber: number, exchangedFrom: t.id }, metadata: { bookingId, oldTicketNumber: t.ticket_number, documents: docs, flightsChanged: input.segments?.length ?? 0, reason },
+      });
       this.touch(actor, bookingId);
     });
     return this.get(actor, bookingId);
@@ -860,7 +967,7 @@ export class BookingService {
   netSale(bookingId: string, ticketId: string | null): number {
     return (this.deps.db
       .prepare(`SELECT COALESCE(SUM(jl.credit_minor - jl.debit_minor), 0) AS v FROM journal_line jl JOIN ledger_account la ON la.code = jl.account_code
-                WHERE jl.booking_id = ? AND la.account_class IN ('REVENUE','CONTRA_REVENUE') AND jl.account_code <> '4210' AND (? IS NULL OR jl.ticket_id = ?)`)
+                WHERE jl.booking_id = ? AND la.account_class IN ('REVENUE','CONTRA_REVENUE') AND jl.account_code <> '4210' AND (? IS NULL OR jl.ticket_id IN ${TICKET_CHAIN})`)
       .get(bookingId, ticketId, ticketId) as { v: number }).v;
   }
 
@@ -868,12 +975,12 @@ export class BookingService {
   netCost(ticketId: string, supplierId: string): number {
     return (this.deps.db
       .prepare(`SELECT COALESCE(SUM(jl.debit_minor - jl.credit_minor), 0) AS v FROM journal_line jl
-                WHERE jl.ticket_id = ? AND jl.supplier_id = ? AND jl.account_code IN ('5100','5110')`)
+                WHERE jl.ticket_id IN ${TICKET_CHAIN} AND jl.supplier_id = ? AND jl.account_code IN ('5100','5110')`)
       .get(ticketId, supplierId) as { v: number }).v;
   }
 
   costCurrency(ticketId: string): string | null {
-    return (this.deps.db.prepare(`SELECT currency_code FROM journal_line WHERE ticket_id = ? AND account_code = '5100' LIMIT 1`).get(ticketId) as { currency_code: string } | undefined)?.currency_code ?? null;
+    return (this.deps.db.prepare(`SELECT currency_code FROM journal_line WHERE ticket_id IN ${TICKET_CHAIN} AND account_code = '5100' LIMIT 1`).get(ticketId) as { currency_code: string } | undefined)?.currency_code ?? null;
   }
 
   rateForDoc(currency: string, date: string, fallback: string | null): string {
@@ -942,9 +1049,9 @@ export class BookingService {
 
   private tickets(bookingId: string, viewCost: boolean, saleCurrency: string, paxName: Map<string, string>): TicketDto[] {
     const rows = this.deps.db
-      .prepare(`SELECT t.*, s.name AS supplier_name, a.name_en AS airline_name FROM ticket t JOIN supplier s ON s.id = t.supplier_id
-                LEFT JOIN airline a ON a.id = t.validating_airline_id WHERE t.booking_id = ? ORDER BY t.created_at, t.id`)
-      .all(bookingId) as { id: string; ticket_number: string | null; passenger_id: string; supplier_id: string; supplier_name: string; validating_airline_id: string | null; airline_name: string | null; status: TicketDto['status']; issue_date: string; notes: string | null; row_version: number }[];
+      .prepare(`SELECT t.*, s.name AS supplier_name, a.name_en AS airline_name, x.ticket_number AS exchanged_from_number FROM ticket t JOIN supplier s ON s.id = t.supplier_id
+                LEFT JOIN airline a ON a.id = t.validating_airline_id LEFT JOIN ticket x ON x.id = t.exchanged_from_ticket_id WHERE t.booking_id = ? ORDER BY t.created_at, t.id`)
+      .all(bookingId) as { id: string; ticket_number: string | null; exchanged_from_ticket_id: string | null; exchanged_from_number: string | null; passenger_id: string; supplier_id: string; supplier_name: string; validating_airline_id: string | null; airline_name: string | null; status: TicketDto['status']; issue_date: string; notes: string | null; row_version: number }[];
     const sale = this.deps.db.prepare(`SELECT COALESCE(SUM(jl.credit_minor - jl.debit_minor), 0) AS v FROM journal_line jl JOIN ledger_account la ON la.code = jl.account_code
                                        WHERE jl.ticket_id = ? AND la.account_class IN ('REVENUE','CONTRA_REVENUE') AND jl.account_code <> '4210'`);
     const cost = this.deps.db.prepare(`SELECT COALESCE(SUM(jl.debit_minor - jl.credit_minor), 0) AS v, MAX(jl.currency_code) AS cur FROM journal_line jl
@@ -954,7 +1061,7 @@ export class BookingService {
       return {
         id: t.id, ticketNumber: t.ticket_number, passengerId: t.passenger_id, passengerName: paxName.get(t.passenger_id) ?? '', supplierId: t.supplier_id,
         supplierName: t.supplier_name, validatingAirlineId: t.validating_airline_id, airlineName: t.airline_name, status: t.status, issueDate: t.issue_date,
-        notes: t.notes, saleMinor: (sale.get(t.id) as { v: number }).v, saleCurrency, costMinor: c ? c.v : null, costCurrency: c ? c.cur : null, rowVersion: t.row_version,
+        notes: t.notes, exchangedFromId: t.exchanged_from_ticket_id, exchangedFromNumber: t.exchanged_from_number, saleMinor: (sale.get(t.id) as { v: number }).v, saleCurrency, costMinor: c ? c.v : null, costCurrency: c ? c.cur : null, rowVersion: t.row_version,
       };
     });
   }

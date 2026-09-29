@@ -285,6 +285,7 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
   'bookings.adjustSale': { access: perm('booking.adjust_price'), run: (ctx, i) => ctx.backend.svc.bookings.adjustSale(actor(ctx), i.bookingId, i) },
   'bookings.adjustCost': { access: perm('booking.adjust_price'), run: (ctx, i) => ctx.backend.svc.bookings.adjustCost(actor(ctx), i.bookingId, i) },
   'bookings.changeSupplier': { access: perm('booking.change_supplier'), run: (ctx, i) => ctx.backend.svc.bookings.changeSupplier(actor(ctx), i.bookingId, i) },
+  'bookings.reissue': { access: perm('booking.reissue'), run: (ctx, i) => ctx.backend.svc.bookings.reissue(actor(ctx), i.bookingId, i) },
 
   'payments.receive': { access: perm('payment.customer.receive'), run: (ctx, i) => ctx.backend.svc.finance.receiveCustomerPayment(actor(ctx), i) },
   'payments.refundCustomer': { access: perm('payment.customer.refund'), run: (ctx, i) => ctx.backend.svc.finance.refundCustomer(actor(ctx), i) },

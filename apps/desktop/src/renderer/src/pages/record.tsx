@@ -13,7 +13,7 @@ type Can = (p: string) => boolean;
 type Dialog =
   | { k: 'header' } | { k: 'passenger'; p: PassengerDto | null } | { k: 'segment'; s: SegmentDto | null } | { k: 'price'; passenger: PassengerDto; item: PriceItemDto | null }
   | { k: 'ticketed' } | { k: 'discard' } | { k: 'pay'; kind: PayKind; supplierId?: string; supplierName?: string; currency: string }
-  | { k: 'doc'; doc: DocumentDto } | { k: 'cancelDoc'; doc: DocumentDto } | { k: 'print' } | { k: 'ticketNo'; ticketId: string }
+  | { k: 'doc'; doc: DocumentDto } | { k: 'cancelDoc'; doc: DocumentDto } | { k: 'print' } | { k: 'ticketNo'; ticketId: string } | { k: 'reissue'; ticketId: string }
   | { k: 'cancelReq' } | { k: 'supplierConfirm'; c: CancellationDto } | { k: 'customerCredit'; c: CancellationDto } | { k: 'cxNote'; c: CancellationDto; action: 'reject' | 'nothing' | 'withdraw' }
   | { k: 'notify'; change: ScheduleChangeDto } | { k: 'confirmChange'; change: ScheduleChangeDto } | { k: 'adjust'; mode: 'sale' | 'cost' | 'supplier' };
 
@@ -147,13 +147,16 @@ export function RecordPage({ id, can, onBack }: { id: string; can: Can; onBack: 
         <section className="card section">
           <h2>{t('tickets')}</h2>
           <table data-testid="tickets-table">
-            <thead><tr><th>{t('ticketNumber')}</th><th>{t('passenger')}</th><th>{t('airline')}</th><th>{t('supplierSource')}</th><th>{t('issueDate')}</th><th>{t('status')}</th><th className="num">{t('customerPrice')}</th><th className="num">{t('purchaseCost')}</th></tr></thead>
+            <thead><tr><th>{t('ticketNumber')}</th><th>{t('passenger')}</th><th>{t('airline')}</th><th>{t('supplierSource')}</th><th>{t('issueDate')}</th><th>{t('status')}</th><th className="num">{t('customerPrice')}</th><th className="num">{t('purchaseCost')}</th><th /></tr></thead>
             <tbody>{b.tickets.map((x) => (
-              <tr key={x.id}>
-                <td className="ltr">{x.ticketNumber ?? (can('booking.issue') || can('booking.edit') ? <button className="link" onClick={() => setDialog({ k: 'ticketNo', ticketId: x.id })}>{t('recordTicketNumber')}</button> : '—')}</td>
+              <tr key={x.id} className={x.status === 'EXCHANGED' ? 'muted' : ''} data-ticket={x.status}>
+                <td className="ltr">{x.ticketNumber ?? (x.status === 'ISSUED' && (can('booking.issue') || can('booking.edit')) ? <button className="link" onClick={() => setDialog({ k: 'ticketNo', ticketId: x.id })}>{t('recordTicketNumber')}</button> : '—')}
+                  {x.exchangedFromNumber && <div className="small muted">{t('replaces')} {x.exchangedFromNumber}</div>}</td>
                 <td className="ltr">{x.passengerName}</td><td>{x.airlineName}</td><td>{x.supplierName}</td><td className="ltr">{date(x.issueDate)}</td>
                 <td><span className={`badge ${x.status === 'ISSUED' ? 'ok' : 'warn'}`}>{t(`tk_${x.status}` as TKey)}</span></td>
                 <td className="num ltr">{m.fmt(x.saleMinor, x.saleCurrency)}</td><td className="num ltr">{x.costMinor === null ? '—' : m.fmt(x.costMinor, x.costCurrency ?? m.base)}</td>
+                <td className="row-actions">{x.status === 'ISSUED' && can('booking.reissue') && (b.status === 'ISSUED' || b.status === 'PARTIALLY_CANCELLED') &&
+                  <button onClick={() => setDialog({ k: 'reissue', ticketId: x.id })} data-testid="reissue-ticket">{t('reissue')}</button>}</td>
               </tr>
             ))}</tbody>
           </table>
@@ -317,6 +320,7 @@ export function RecordPage({ id, can, onBack }: { id: string; can: Can; onBack: 
       {dialog?.k === 'print' && <RecordPrint record={b} onClose={() => setDialog(null)} />}
       {dialog?.k === 'cancelDoc' && <ConfirmDialog title={`${t('cancelDocument')} ${dialog.doc.docNo}`} text={t('cancelDocumentText')} confirmLabel={t('cancelDocument')} danger withReason onClose={() => setDialog(null)}
         onConfirm={async (reason) => { await call('documents.cancel', { id: dialog.doc.id, reason: reason ?? '' }); refresh(t('saved')); }} />}
+      {dialog?.k === 'reissue' && <ReissueDialog b={b} ticketId={dialog.ticketId} canCost={can('booking.enter_cost')} onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
       {dialog?.k === 'ticketNo' && <TicketNumberDialog bookingId={b.id} ticketId={dialog.ticketId} onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
       {dialog?.k === 'cancelReq' && <CancelRequestDialog b={b} onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
       {dialog?.k === 'supplierConfirm' && <CxAmountsDialog b={b} c={dialog.c} side="supplier" onClose={() => setDialog(null)} onSaved={() => refresh(t('saved'))} />}
@@ -529,6 +533,74 @@ function TicketedDialog({ b, onClose, onSaved }: { b: BookingDto; onClose: () =>
       <p className="hint">{t('scopeNote')}</p>
       <label>{t('issueDate')}<input type="date" className="ltr" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></label>
       {error && <Alert kind="error">{error}</Alert>}
+    </Modal>
+  );
+}
+
+/**
+ * Records a reissue/exchange that the airline or consolidator already made:
+ * new ticket number, new flight details, and the money differences only.
+ */
+function ReissueDialog({ b, ticketId, canCost, onClose, onSaved }: { b: BookingDto; ticketId: string; canCost: boolean; onClose: () => void; onSaved: () => void }) {
+  const { t } = useI18n();
+  const ticket = b.tickets.find((x) => x.id === ticketId)!;
+  const costCur = ticket.costCurrency ?? b.saleCurrency;
+  const active = b.segments.filter((s) => s.status !== 'CANCELLED');
+  const [v, setV] = useState({ number: '', fare: null as number | null, fee: null as number | null, cost: null as number | null, penalty: null as number | null, reference: '', reason: '', date: '' });
+  const [flights, setFlights] = useState<Record<string, { departureDate: string; departureTime: string; arrivalDate: string; arrivalTime: string; flightNumber: string }>>(
+    () => Object.fromEntries(active.map((s) => [s.id, { departureDate: s.departureDate, departureTime: s.departureTime, arrivalDate: s.arrivalDate, arrivalTime: s.arrivalTime, flightNumber: s.flightNumber }])),
+  );
+  const { error, busy, run, err } = useSave(onSaved);
+  const changed = active.filter((s) => {
+    const f = flights[s.id]!;
+    return f.departureDate !== s.departureDate || f.departureTime !== s.departureTime || f.arrivalDate !== s.arrivalDate || f.arrivalTime !== s.arrivalTime || f.flightNumber !== s.flightNumber;
+  });
+  const save = () => run(() => call('bookings.reissue', {
+    bookingId: b.id, ticketId, rowVersion: b.rowVersion, newTicketNumber: v.number.trim() || null, reason: v.reason, date: v.date || null,
+    fareDifferenceMinor: v.fare ?? 0, changeFeeMinor: v.fee ?? 0, additionalCostMinor: v.cost ?? 0, supplierPenaltyMinor: v.penalty ?? 0,
+    externalReference: v.reference.trim() || null,
+    segments: changed.map((s) => ({
+      segmentId: s.id,
+      segment: {
+        airlineId: s.airlineId, operatingAirlineId: s.operatingAirlineId, origin: s.origin, destination: s.destination, cabinClass: s.cabinClass,
+        bookingClass: s.bookingClass, departureTerminal: s.departureTerminal, arrivalTerminal: s.arrivalTerminal, baggage: s.baggage, seat: s.seat,
+        airlineLocator: s.airlineLocator, status: s.status, notes: s.notes, ...flights[s.id]!,
+      },
+    })),
+  }));
+  const set = (id: string, patch: Partial<(typeof flights)[string]>) => setFlights({ ...flights, [id]: { ...flights[id]!, ...patch } });
+  return (
+    <Modal wide title={`${t('reissue')} — ${ticket.ticketNumber ?? ticket.passengerName}`} onClose={onClose} testId="reissue-dialog"
+      footer={<><button className="primary" disabled={busy || !v.reason.trim()} onClick={save} data-testid="save">{t('save')}</button><button onClick={onClose}>{t('cancel')}</button></>}>
+      <p className="hint">{t('reissueHint')}</p>
+      {error && <Alert kind="error">{error}</Alert>}
+      <div className="grid">
+        <label>{t('newTicketNumber')}<input className="ltr code" value={v.number} maxLength={20} onChange={(e) => setV({ ...v, number: e.target.value })} data-testid="ri-number" /><FieldErr msg={err('newTicketNumber')} /></label>
+        <label>{t('date')}<input type="date" className="ltr" value={v.date} onChange={(e) => setV({ ...v, date: e.target.value })} /></label>
+        <MoneyInput label={t('fareDifference')} value={v.fare} currency={b.saleCurrency} onChange={(x) => setV({ ...v, fare: x })} testId="ri-fare" />
+        <MoneyInput label={t('lt_CHANGE_FEE')} value={v.fee} currency={b.saleCurrency} onChange={(x) => setV({ ...v, fee: x })} testId="ri-fee" />
+        {canCost && <MoneyInput label={t('additionalCost')} value={v.cost} currency={costCur} onChange={(x) => setV({ ...v, cost: x })} testId="ri-cost" />}
+        {canCost && <MoneyInput label={t('lt_SUPPLIER_PENALTY')} value={v.penalty} currency={costCur} onChange={(x) => setV({ ...v, penalty: x })} testId="ri-penalty" />}
+        {canCost && <label>{t('supplierReference')}<input className="ltr" value={v.reference} maxLength={60} onChange={(e) => setV({ ...v, reference: e.target.value })} /></label>}
+        <label className="span-all">{t('changeReason')}<input value={v.reason} maxLength={500} onChange={(e) => setV({ ...v, reason: e.target.value })} data-testid="ri-reason" /></label>
+      </div>
+      <h3>{t('flightsAfterReissue')}</h3>
+      <table>
+        <thead><tr><th>{t('route')}</th><th>{t('flightNumber')}</th><th>{t('departureDate')}</th><th>{t('departureTime')}</th><th>{t('arrivalDate')}</th><th>{t('arrivalTime')}</th></tr></thead>
+        <tbody>{active.map((s) => {
+          const f = flights[s.id]!;
+          return (
+            <tr key={s.id} className={changed.includes(s) ? 'changed' : ''}>
+              <td className="ltr">{s.origin} → {s.destination}</td>
+              <td><input className="ltr code compact" value={f.flightNumber} maxLength={5} onChange={(e) => set(s.id, { flightNumber: e.target.value })} /></td>
+              <td><input type="date" className="ltr" value={f.departureDate} onChange={(e) => set(s.id, { departureDate: e.target.value })} data-testid={`ri-dep-${s.seq}`} /></td>
+              <td><input type="time" className="ltr" value={f.departureTime} onChange={(e) => set(s.id, { departureTime: e.target.value })} /></td>
+              <td><input type="date" className="ltr" value={f.arrivalDate} onChange={(e) => set(s.id, { arrivalDate: e.target.value })} data-testid={`ri-arr-${s.seq}`} /></td>
+              <td><input type="time" className="ltr" value={f.arrivalTime} onChange={(e) => set(s.id, { arrivalTime: e.target.value })} /></td>
+            </tr>
+          );
+        })}</tbody>
+      </table>
     </Modal>
   );
 }
