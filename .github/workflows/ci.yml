@@ -195,6 +195,7 @@ jobs:
           Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
       - uses: actions/upload-artifact@v4
         with:
-          name: AirDesk-Setup-windows-x64
+          # Development build: UNSIGNED, never a release artifact (releases come only from release.yml).
+          name: AirDesk-Setup-UNSIGNED-dev-build-windows-x64
           path: apps/desktop/dist/AirDesk-Setup-*-x64.exe
           retention-days: 14

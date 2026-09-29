@@ -16,7 +16,8 @@
 | [disaster-recovery.md](disaster-recovery.md) | Clean-PC restore procedure for the owner (+ drill record) | English |
 | [physical-windows-checklist.md](physical-windows-checklist.md) | Manual Windows 10/11 release checklist | English |
 | [vat-e-invoicing.md](vat-e-invoicing.md) | VAT / ETA / ZATCA status and requirements | English |
-| [release-gate-1.0.0.md](release-gate-1.0.0.md) | Final release gate report (1.0.0-rc.2) | English |
+| [release-gate-1.0.0.md](release-gate-1.0.0.md) | Final release gate report (1.0.0-rc.2): what is automated, CI-verified, manual, external | English |
+| [code-signing-guide-ar.md](code-signing-guide-ar.md) | How to obtain the code-signing certificate and add it to GitHub | العربية |
 | [release-audit.md](release-audit.md) | Final pre-release audit report (A–L), release recommendation | English |
 | [final-report.md](final-report.md) | Product completion report (A–N) | English |
 

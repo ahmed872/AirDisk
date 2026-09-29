@@ -129,7 +129,7 @@ export const OPS = {
   setPrice: ['إدخال السعر', 'Enter price'],
 
   st_DRAFT: ['قيد الإدخال', 'Being recorded'],
-  st_RESERVED: ['حجز قائم (لم تُصدر بعد)', 'Reserved (not yet ticketed)'],
+  st_RESERVED: ['حجز قائم خارجيًا (لم تُصدر بعد)', 'Existing reservation (not yet ticketed)'],
   st_ISSUED: ['تذكرة صادرة', 'Ticketed'],
   st_PARTIALLY_CANCELLED: ['ملغاة جزئيًا', 'Partly cancelled'],
   st_CANCELLED: ['ملغاة', 'Cancelled'],
@@ -151,7 +151,7 @@ export const OPS = {
   pay_PAID: ['مدفوع بالكامل', 'Paid'],
   pay_CREDIT: ['رصيد للعميل', 'Customer credit'],
 
-  markReserved: ['تسجيل كحجز قائم (لم يُصدر)', 'Mark as reserved (not ticketed)'],
+  markReserved: ['تسجيل كحجز قائم خارجيًا (لم يُصدر)', 'Mark as existing reservation (not ticketed)'],
   releaseReservation: ['إرجاع لمسودة', 'Back to draft'],
   confirmTicketed: ['تأكيد: التذكرة صدرت — تسجيل البيع والشراء', 'Confirm ticketed — record sale & purchase'],
   confirmTicketedText: ['سيتم تسجيل التذاكر الصادرة خارجيًا وقيد فاتورة البيع للعميل وفاتورة الشراء من المورد. بعد ذلك لا تُعدَّل المبالغ إلا بتسويات موثقة.', 'The externally issued tickets will be recorded and the customer invoice and supplier bill will be posted. After this, amounts only change through documented adjustments.'],
@@ -485,7 +485,7 @@ export const OPS = {
   bs_RUNNING: ['جارية', 'Running'],
 
   // ── Encryption & recovery ──
-  recoveryTitle: ['حماية البيانات: عبارة الاسترداد', 'Data protection: recovery passphrase'],
+  recoveryTitle: ['الخطوة 3 من 3: حماية البيانات (عبارة الاسترداد)', 'Step 3 of 3: data protection (recovery passphrase)'],
   recoveryIntro: ['يتم تشفير كل بيانات الشركة والنسخ الاحتياطية. عبارة الاسترداد هي الطريقة الوحيدة لفتح البيانات على جهاز جديد أو بعد إعادة تثبيت ويندوز أو من نسخة احتياطية.',
     'All company data and backups are encrypted. The recovery passphrase is the only way to open the data on a new PC, after reinstalling Windows, or from a backup.'],
   recoveryWarning: ['لا توجد نسخة لدى أحد ولا كلمة مرور رئيسية. إذا ضاعت العبارة ولم يعد أي جهاز يفتح البيانات تلقائيًا، لا يمكن استرجاع البيانات نهائيًا. اكتبها واحفظها في مكان آمن خارج الجهاز.',

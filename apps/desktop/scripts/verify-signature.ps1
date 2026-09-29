@@ -4,6 +4,7 @@ param([string]$Dist = 'apps/desktop/dist', [string]$ExpectedSubject = $env:AIRDE
 $ErrorActionPreference = 'Stop'
 $files = @(Get-ChildItem "$Dist/AirDesk-Setup-*-x64.exe") + @(Get-ChildItem "$Dist/win-unpacked/AirDesk.exe")
 if ($files.Count -lt 2) { throw "Installer or AirDesk.exe not found in $Dist" }
+if ($files | Where-Object { $_.Name -match 'UNSIGNED' }) { throw 'An UNSIGNED development installer is present in the release folder' }
 foreach ($f in $files) {
   $sig = Get-AuthenticodeSignature $f.FullName
   Write-Host "$($f.Name): $($sig.Status) — $($sig.SignerCertificate.Subject) — timestamp: $([bool]$sig.TimeStamperCertificate)"

@@ -1,5 +1,7 @@
 # AirDesk release gate: 1.0.0-rc.2
 
+**Status: AirDesk 1.0.0 Release Candidate. The code is complete and it is awaiting external release validation.** It is not 1.0.0 and not generally available.
+
 - **Branch:** `claude/loving-rubin-kyf18y`
 - **Version:** `1.0.0-rc.2`
 - **Scope (unchanged):** AirDesk records and manages airline tickets and reservations that were booked and issued **outside** it. It does not search flights, reserve seats, create PNRs, issue tickets, or connect to any GDS, airline or consolidator system.
@@ -17,7 +19,7 @@
 | Crash safety | Swap marker plus staged key file: interrupted restores and encryptions finish or roll back at the next start, waiting for the passphrase if needed. |
 | Backups off the main thread | Snapshot by checkpoint + asynchronous copy; packaging, verification, re-encryption, integrity check and restore validation run on a worker thread bundled with the app. |
 | Audit trail | Tail-truncation check; external chain checkpoints at every backup and restore. Keying the chain to the data key was analysed and rejected: no gain against anyone able to write the encrypted file (see [encryption-plan.md §7](encryption-plan.md)). |
-| Code signing | Environment-only credentials (PFX or Azure Trusted Signing); a gate that refuses unsigned release builds with a clear message; Authenticode + timestamp verification; `release.yml` in a protected environment (sign, verify, smoke-test the signed build, checksums). |
+| Code signing | Environment-only credentials (PFX or Azure Trusted Signing).<br>A gate refuses unsigned release builds with a clear message; development installers are named `…-UNSIGNED-x64.exe`.<br>Authenticode + timestamp verification.<br>`release.yml` in a protected environment: tag = version check, sign, verify, smoke-test the signed build, checksums re-verified, **draft** GitHub release.<br>How to get the certificate (Arabic): [code-signing-guide-ar.md](code-signing-guide-ar.md). |
 | VAT | Nothing calculated. Status and requirements (generic model, ETA, ZATCA, UAE) documented in [vat-e-invoicing.md](vat-e-invoicing.md). |
 
 ## 2. Verified automatically
@@ -31,7 +33,7 @@
 | Worker regression (`backup-worker.test.ts`) | backup: main thread busy 17 ms of 2.6 s; integrity 8 ms of 0.96 s; the same check in-process: 797 ms |
 | Security (`release-audit.test.ts`, `rbac.test.ts`) | A Sales Agent calling the backend directly is denied cost, profit, supplier finances, other agents' records, backup/restore/inspect and every `security.*` command. The pre-login `vault.*` commands refuse once the data is open. Strict schemas, parameterised SQL, constrained paths, CSV injection, Electron hardening: all unchanged and tested. |
 | Financial regression | A mixed month produces **identical** reports, statements, aging, dashboard, trial balance and account balances before encryption, after encryption, and after recovery on a new PC. The mix covers: sale, cost, partial and supplier payments, cancellation with fee and supplier penalty, customer credit application and refund, expense, transfer, owner capital and drawing, opening balance, reissue. Refund, FX and 3-decimal currency flows are also verified by their own existing suites. |
-| Performance (`AIRDESK_PERF=1`, 140 MB) | Every interactive operation < 0.6 s. Encrypted backup 10.5 s with 8 ms main-thread lag; integrity 4.6 s with 3 ms ([performance.md](performance.md)). |
+| Performance (`AIRDESK_PERF=1`, 140 MB) | Every interactive operation < 0.6 s. Encrypted backup 10.3–10.5 s with 8–134 ms main-thread lag; integrity 4.4–4.6 s with 3–6 ms (two runs) ([performance.md](performance.md)). |
 | Electron smoke (real runtime, Linux) | full / seed / verify / recover / **upgrade from the real rc.1 build**: all pass; jobs ran on the worker; no customer or ticket text readable in the data folder |
 | E2E (Playwright + Electron, Linux) | foundation ✔; Phase 2 20/20 ✔ (restart → unlock screen, wrong then right passphrase); operations 14/14 ✔ |
 | Linux CI | ✔ run 29 (`197fc1b`): typecheck, lint, tests + coverage, build, Electron smoke, 3 E2E suites |
@@ -75,6 +77,14 @@ The Windows CI job covers:
   - sleep and power loss.
 - The clean-PC drill in [disaster-recovery.md](disaster-recovery.md) with a **real office backup** on a replacement PC, recorded in its table.
 
+### Manual results (fill in; empty means not done)
+
+| Check | Windows 10 | Windows 11 | Date / by |
+|---|---|---|---|
+| Physical checklist (46 items) | ☐ | ☐ | |
+| Clean-PC drill with a real office backup | ☐ (any PC) | | |
+| Signed installer verified on a physical PC | ☐ | ☐ | |
+
 ## 4. Requires external business or legal action
 
 - **Code-signing certificate:** an OV/EV certificate or an Azure Trusted Signing account, added as secrets to the `release` environment; then tag `v1.0.0`.
@@ -110,7 +120,10 @@ The Windows CI job covers:
 - `5398b1e` + `197fc1b` worker test stabilised (event-loop utilisation), agent tests, docs
 - CI run 29 on `197fc1b`: Linux ✔, Windows ✔ ([run](https://github.com/ahmed872/AirDisk/actions/runs/36552574340)). The docs-only commit that adds this report runs the same workflow.
 
-## 7. Recommendation
+## 7. Recommendation and procedure to 1.0.0
+
+The exact steps are in [deployment-and-release.md §9](deployment-and-release.md). They need no code changes.
+
 
 **1.0.0-rc.2 is a general-release candidate on the repository side.** Label it `1.0.0` only after the four external items in §5 are closed, in this order:
 1. The signed installer from `release.yml`.

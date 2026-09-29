@@ -68,8 +68,18 @@ Nothing secret is in the repository (`*.pfx`, `*.p12`, `*.cer` are git-ignored).
 - `pnpm dist:win` — development/CI build, unsigned, prints "Building UNSIGNED".
 - `pnpm dist:win:release` — sets `AIRDESK_REQUIRE_SIGNING=1`; **fails with a clear message** if credentials are missing, half-configured, or both kinds are set; otherwise electron-builder signs `AirDesk.exe`, the uninstaller and the installer with SHA-256 and an RFC 3161 timestamp.
 - `apps/desktop/scripts/verify-signature.ps1` — fails unless installer and `AirDesk.exe` are `Valid`, timestamped and (optionally) from the expected subject.
-- `.github/workflows/release.yml` — on a `v*.*.*` tag or manual dispatch: full CI gates → build and sign in the protected `release` environment → verify signatures → silent install + packaged smoke test of the **signed** build → SHA-256 checksums → artifact.
+- `.github/workflows/release.yml`, on a `v*.*.*` tag (or manual dispatch for a dry run, without a GitHub release):
+  1. full CI gates (Linux + Windows);
+  2. the tag must equal the version in every `package.json`;
+  3. build and sign in the protected `release` environment (fails without credentials);
+  4. verify Authenticode + timestamp;
+  5. silent install + packaged smoke test of the **signed** build;
+  6. SHA-256 checksums, re-verified against the file, with the signature re-checked;
+  7. a **draft** GitHub release. RC tags are marked pre-release. A person publishes it.
+- Development/CI installers are named `AirDesk-Setup-<version>-UNSIGNED-x64.exe` and uploaded as `AirDesk-Setup-UNSIGNED-dev-build-…`. The release job refuses any file with `UNSIGNED` in its name.
 - CI proves the gate refuses unsigned release builds on every run; the signed path runs only when the owner adds the certificate.
+
+Step-by-step (Arabic) for obtaining the certificate: [code-signing-guide-ar.md](code-signing-guide-ar.md).
 
 **Certificate requirements:** OV or EV code-signing certificate in the name of the selling legal entity (or the white-label partner), private key on a hardware token/HSM or a cloud signing service (CA/B Forum rules since June 2023). EV gives immediate SmartScreen reputation; OV builds reputation over downloads. **Exact external action:** buy the certificate (or create an Azure Trusted Signing account + certificate profile), add the secrets/variables above to the `release` environment with required reviewers, push tag `v1.0.0`.
 
@@ -79,3 +89,16 @@ Nothing secret is in the repository (`*.pfx`, `*.p12`, `*.cer` are git-ignored).
 - **No auto-start:** AirDesk does not register itself to start with Windows (no Run key, no login item, no service, no scheduled task). Automatic backups therefore need the app to be open.
 - **Paths:** program files are read-only; all writable data (database, backups, logs, backup history) is under `%ProgramData%\AirDesk\data`, which the installer grants *Users* modify rights so standard (non-admin) Windows users can run AirDesk.
 - **Not verified:** physical Windows 10 and Windows 11 PCs (UAC prompts, SmartScreen with an unsigned installer, antivirus interaction, Arabic fonts, printers and PDF output, high-DPI scaling, multiple Windows user accounts on one PC). This is a release blocker and needs a pilot checklist run on real hardware.
+
+## 9. From 1.0.0-rc.2 to 1.0.0 (no engineering work needed)
+
+When the external items in [release-gate-1.0.0.md](release-gate-1.0.0.md) §5 are closed:
+1. **Certificate:** add it to the `release` environment ([code-signing-guide-ar.md](code-signing-guide-ar.md)). Dry run: *Actions → Release → Run workflow* on the current commit; the artifact must be signed.
+2. **Physical checks:** run [physical-windows-checklist.md](physical-windows-checklist.md) on Windows 10 and 11 with that signed dry-run installer; record PASS/FAIL. Any FAIL goes back to engineering.
+3. **DR drill:** follow [disaster-recovery.md](disaster-recovery.md) with a real office backup; fill in the drill record.
+4. **VAT:** record the market decision in [vat-e-invoicing.md](vat-e-invoicing.md) §4. Sell only where no VAT/e-invoicing obligation applies to AirDesk, or after that work is done.
+5. **Version:** `node scripts/set-version.mjs 1.0.0`. Change "1.0.0-rc.2" to "1.0.0" in `README.md`, `docs/product/README.md` and the status line of `release-gate-1.0.0.md`, and fill in the manual-results table there. Commit; wait for CI green on Linux and Windows.
+6. **Tag:** `git tag -a v1.0.0 -m "AirDesk 1.0.0" && git push origin v1.0.0`. Approve the `release` environment when GitHub asks.
+7. **Publish:** open the draft release, check the installer name, `SHA256SUMS.txt` and the signature (Properties → Digital Signatures on a Windows PC), then **Publish**.
+
+The same procedure with `1.0.0-rc.3` produces a signed pre-release instead, for pilots.

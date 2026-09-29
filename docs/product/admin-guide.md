@@ -21,9 +21,10 @@ Run `AirDesk-Setup-<version>-x64.exe`, accept the UAC prompt, optionally change 
 
 ### Silent (for IT / mass deployment)
 ```powershell
-AirDesk-Setup-1.0.0-rc.1-x64.exe /S /allusers
+# release installers are signed; development builds are named AirDesk-Setup-<version>-UNSIGNED-x64.exe
+AirDesk-Setup-<version>-x64.exe /S /allusers
 # optional install folder:
-AirDesk-Setup-1.0.0-rc.1-x64.exe /S /allusers /D=C:\Apps\AirDesk
+AirDesk-Setup-<version>-x64.exe /S /allusers /D=C:\Apps\AirDesk
 ```
 
 ### What goes where
@@ -39,7 +40,7 @@ AirDesk-Setup-1.0.0-rc.1-x64.exe /S /allusers /D=C:\Apps\AirDesk
 The installer grants the local *Users* group modify rights on `%ProgramData%\AirDesk` so every Windows user of the PC works on the same company database.
 
 ### Version information
-`AirDesk.exe` → Properties → Details shows *Product name: AirDesk*, *File version: 1.0.0-rc.1*. *Apps & Features* lists **AirDesk 1.0.0-rc.1**. In the app: **About**, which also shows the database schema version and every migration applied.
+`AirDesk.exe` → Properties → Details shows *Product name: AirDesk*, *File version: <version>*. *Apps & Features* lists **AirDesk <version>** (e.g. 1.0.0-rc.2). In the app: **About**, which also shows the database schema version and every migration applied.
 
 ## 3. Uninstall, reinstall, upgrade
 
@@ -86,10 +87,10 @@ Then configure (all under the admin menus):
 - The app must be running for automatic backups; if it was closed for days, the backup runs on the next start.
 
 ### Manual backup
-**Backup & restore → Back up now.** A backup is reported successful only after the file was re-read, its SHA-256 checked, decompressed and integrity-checked (SQLite integrity, foreign keys, audit chain, trial balance). Duration: 1–2 s for a typical office database; about 13–15 s for a very large one (140 MB, 10,000 ticket records), during which AirDesk is busy — do not close it. The destination is always an absolute folder path; a failed backup is recorded as FAILED in the history and audit log and leaves no partial file.
+**Backup & restore → Back up now.** A backup is reported successful only after the file was written atomically, re-read, its SHA-256 checked and integrity-checked (SQLite integrity, foreign keys, audit chain, trial balance), on a background worker thread; the window stays usable and shows "Working…". Duration: a few seconds for a typical office database; about 10 s for a very large one (140 MB, 10,000 ticket records) — do not close AirDesk until it finishes. The destination is always an absolute folder path; a failed backup is recorded as FAILED in the history and audit log and leaves no partial file.
 
 ### Off-site copies (required practice)
-Copy the newest `.adbk` from `%ProgramData%\AirDesk\data\backups` to a USB drive or another location **at least weekly**. A backup on the same disk does not protect against disk failure, theft or ransomware. Because backups are not encrypted in this version, treat the files as confidential.
+Copy the newest `.adbk` from `%ProgramData%\AirDesk\data\backups` to a USB drive or another location **at least weekly**. A backup on the same disk does not protect against disk failure, theft or ransomware. Backups are encrypted and open only with the recovery passphrase that was valid when they were made; old unencrypted rc.1 backups should be deleted after enabling encryption.
 
 ### Restore (same PC)
 1. **Backup & restore → Restore → Choose file…** and pick the `.adbk`.

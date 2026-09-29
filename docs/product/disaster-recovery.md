@@ -10,26 +10,34 @@ For the office owner and whoever installs the replacement PC. Keep a printed cop
 
 Without the passphrase an encrypted backup cannot be opened by anyone. There is no master password and no vendor copy.
 
-## Procedure (about 10 minutes)
+## Before you start: write down these reference figures (every week, on paper, with the backup)
 
-| # | Step | How to check it |
+So that you can check the restored data, keep with each off-site backup:
+- Company name as printed on invoices.
+- The number of customers and suppliers: Customers and Suppliers pages, bottom line.
+- The balances of 2 known customers and 2 known suppliers.
+- The Cash & bank book closing balances.
+- Last month's Sales total.
+
+## Procedure on the replacement PC (about 15 minutes)
+
+| # | What to do | What you should see |
 |---|---|---|
-| 1 | Install AirDesk on the new PC (double-click the installer, or `AirDesk-Setup-x.y.z-x64.exe /S /allusers`). | AirDesk opens on the first-run screen. |
-| 2 | On the first-run screen choose **Restore a backup instead of setting up a new company**. Do **not** create a new company. | The "Restore the company data from a backup" screen appears. |
-| 3 | **Choose file…**, select the `.adbk`. | AirDesk shows the backup's date, version and "encrypted". |
-| 4 | Type the **recovery passphrase** (any letter case; dashes optional for a generated one), type `RESTORE`, press **Restore**. | "Wrong passphrase" means this backup was made with another passphrase: try the one valid at that date. |
-| 5 | AirDesk checks the backup before using it: checksum, sealed manifest, page authentication, SQLite integrity, foreign keys, audit chain, trial balance. | A damaged or altered file is refused and nothing is written. |
-| 6 | The login screen appears. Sign in with the **original** user name and password (not a new one). | The login works. |
-| 7 | **Backup & restore → Run integrity check.** | Every line shows ✔ (database, ledger balanced, audit chain, checkpoints). |
-| 8 | Customers: search for 2–3 known customers. | Found, with their details. |
-| 9 | Suppliers: open 1–2 suppliers; check their statement. | Balances as expected. |
-| 10 | Ticket records: open the last few records (PNR, ticket numbers, flights). | Present and unchanged. |
-| 11 | Payments: open a recent record and check Total / Paid / Remaining; **Payments & finance → Treasury** for cash and bank balances. | Match the last known figures. |
-| 12 | Reports: run the Sales and Cash & bank book reports for the current month. | Totals match the last known figures. |
-| 13 | Log in once as each other user who works on this PC. | Each can sign in; each Windows user enters the recovery passphrase once if AirDesk asks. |
-| 14 | **Backup & restore → Back up now**, then copy the new file off the PC. | The backup succeeds and says "encrypted". |
+| 1 | **Install AirDesk.** Run `AirDesk-Setup-<version>-x64.exe` (same version as the old PC or newer). Accept the Windows prompt. | AirDesk opens on the first-run screen. |
+| 2 | **Restore the encrypted backup.** Do **not** fill in the company form. Click **Restore a backup instead of setting up a new company** → **Choose file…** → pick the newest `.adbk` from your USB drive or cloud copy. | The backup's date and version, marked "encrypted". |
+| 3 | **Enter the recovery passphrase** (from your paper; capital or small letters, dashes optional). Type `RESTORE` and press **Restore**. | After a short wait, the login screen. "Wrong passphrase": this backup was made with an older passphrase, so use the one valid on that date. |
+| 4 | **Verify company identity.** Log in with your **usual** user name and password. Open **Company settings**. | Your company name, logo, tax number and address. |
+| 5 | **Verify customers.** Open **Customers**. | Same count as on your paper; 2 known customers are found by name or mobile. |
+| 6 | **Verify suppliers.** Open **Suppliers**. | Same count; 2 known suppliers present. |
+| 7 | **Verify ticket records.** Open **Ticket records**, then the last 3 records. | PNR, ticket numbers, flights and passengers as they were. |
+| 8 | **Verify customer balances.** **Reports & statements → Customer statement** for the 2 customers on your paper. | Same closing balance. |
+| 9 | **Verify supplier balances.** Supplier statement for the 2 suppliers. | Same closing balance. |
+| 10 | **Verify reports.** Run **Sales** for last month and **Cash & bank book** up to the backup date. | Same totals and closing balances as your paper. |
+| 11 | **Verify audit integrity.** **Backup & restore → Run integrity check.** | Every line ✔ (database, ledger balanced, audit chain, checkpoints). |
+| 12 | **Create a new backup.** **Backup & restore → Back up now.** Copy the new file to the USB drive. | "Backup created" with the file path; the list shows it as succeeded. |
+| 13 | **Confirm the new backup can be restored.** On any spare PC (or a test Windows account), repeat steps 1–3 with the NEW file, then log in. | It opens with the same data. The new PC is now protected. |
 
-Anything entered after the backup was made is **not** in the restored data. Re-enter it from paper records or receipts.
+Anything entered on the old PC after the backup was made is **not** in the restored data. Re-enter it from receipts or paper records. Every other Windows user on the new PC enters the recovery passphrase once at first start.
 
 ## Other situations
 
@@ -49,8 +57,18 @@ Anything entered after the backup was made is **not** in the restored data. Re-e
 - A full month of mixed activity reports identical amounts before encryption, after encryption, and after recovery.
 - Windows CI, on the packaged installer: seed data → encrypted off-site backup → uninstall → delete `%ProgramData%\AirDesk` **and** the Windows user's device key (a clean machine) → reinstall → `--smoke-phase=recover` with the backup and passphrase → verify logins, records, balances, reports, integrity, a new backup, and that no customer or ticket data is readable on disk.
 
-**Not yet performed:** the drill above on a **physical** replacement PC with a **real office backup**. It must be done once before general release (and once a year after), with the result recorded below.
+**Not yet performed:** the drill above on a **physical** replacement PC with a **real office backup**. It must be done once before the 1.0.0 release (and once a year after), and the result written below.
 
-| Date | Office / backup date | PC / Windows version | Duration | Result | By |
-|---|---|---|---|---|---|
-| — | — | — | — | not yet performed | — |
+### Drill record
+
+| Field | Value |
+|---|---|
+| Date | |
+| Office / backup file name and date | |
+| Old PC → new PC (model, Windows build) | |
+| Performed by / witnessed by | |
+| Steps 1–13 | ☐ all passed · ☐ failed at step __ |
+| Differences found (figures that did not match) | |
+| Time taken | |
+| Result | ☐ PASS ☐ FAIL |
+| Signature | |

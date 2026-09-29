@@ -1,6 +1,6 @@
 # Roles and permissions (generated)
 
-Generated from `SYSTEM_ROLES` / `PERMISSIONS` in `packages/domain/src/security/permissions.ts` for version 1.0.0-rc.1. ⚠ marks a sensitive permission.
+Generated from `SYSTEM_ROLES` / `PERMISSIONS` in `packages/domain/src/security/permissions.ts` for version 1.0.0-rc.2. ⚠ marks a sensitive permission.
 
 **Enforcement:** the menus only mirror these permissions for convenience. Every command is authorized again in the backend dispatcher and inside the services (`requirePermission`) before any transaction. Row-level scoping and field redaction are applied on the server:
 - Without `booking.view_all` a user sees only ticket records they created or sell (others read as *not found*).

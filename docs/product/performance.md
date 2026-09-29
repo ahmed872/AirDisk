@@ -58,9 +58,9 @@ Same 140 MB dataset, encrypted in place with **Enable encryption**, then measure
 
 | Operation | Duration | Longest main-thread lag | Where the work runs |
 |---|---:|---:|---|
-| Verified encrypted backup (snapshot, quick check, package, re-read, full validation) | 10.5 s | **8 ms** | worker thread (main: checkpoint + asynchronous file copy) |
-| Full integrity check | 4.6 s | **3 ms** | worker thread, read-only connection |
-| Enable encryption on 1.0.0-rc.1 data (one-time; everyone signed out) | 22.1 s | 2.2 s | copy + encrypt + verify on the worker. The reopen after the swap (seed, search-index check) is on the main thread while no one can work. |
+| Verified encrypted backup (snapshot, quick check, package, re-read, full validation) | 10.3–10.5 s | **8–134 ms** (two runs; the WAL checkpoint before the copy) | worker thread (main: checkpoint + asynchronous file copy) |
+| Full integrity check | 4.4–4.6 s | **3–6 ms** | worker thread, read-only connection |
+| Enable encryption on 1.0.0-rc.1 data (one-time; everyone signed out) | 22–26 s | ~2 s | copy + encrypt + verify on the worker. The reopen after the swap (seed, search-index check) is on the main thread while no one can work. |
 | Encrypted backup file size | 135.6 MB | | encrypted pages do not compress; plain rc.1 backups of the same data were 24 MB |
 
 Regression guard in the normal suite (`backup-worker.test.ts`, a 60,000-event audit log): during a 2.6 s verified backup the main thread was **busy 17 ms**, and during a 0.96 s integrity check 8 ms. The same integrity check run in-process keeps it busy 797 ms. The test fails if work moves back to the main thread.

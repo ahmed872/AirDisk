@@ -1,6 +1,6 @@
 # VAT and e-invoicing: status and requirements
 
-**Status in 1.0.0-rc.2:** AirDesk does **not** calculate VAT and does **not** submit invoices to any tax authority. It is **not** compliant with Egypt's ETA e-invoice/e-receipt system, Saudi Arabia's ZATCA FATOORA, or the UAE FTA e-invoicing programme, and it must not be described as such.
+**Status in 1.0.0-rc.2:** AirDesk does **not** calculate VAT and does **not** submit invoices to any tax authority. It is **not** compliant with Egypt's ETA e-invoice/e-receipt system, Saudi Arabia's ZATCA FATOORA, or the UAE FTA e-invoicing programme, and it must not be described as such. **Market-specific tax and e-invoicing requirements must be decided and met before AirDesk is sold in any market where they are legally required for the office's invoices.** Printed documents show the office's tax number only as identification; they are not certified tax invoices.
 
 ## 1. What exists today (generic, market-neutral)
 
