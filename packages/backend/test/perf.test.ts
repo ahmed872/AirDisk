@@ -136,14 +136,20 @@ describe.skipIf(!RUN)('performance with a representative office dataset', () => 
       await time('integrity check (full)', () => call('integrity.run', {}), 1),
     ];
     const setup = { masterDataMs: Math.round(tData - t0), postingMs: Math.round(tDocs - tData), auditMs: Math.round(tAudit - tDocs) };
-    const report = { counts, setup, results };
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    const dbSizeMb = Math.round(((db.pragma('page_count', { simple: true }) as number) * (db.pragma('page_size', { simple: true }) as number)) / 1048576 * 10) / 10;
+    const backupStart = performance.now();
+    const backup = await env.backend.createBackup(null, 'MANUAL');
+    const backupMs = Math.round(performance.now() - backupStart);
+    const backupSizeMb = Math.round(backup.sizeBytes / 1048576 * 10) / 10;
+    const report = { counts, setup, storage: { dbSizeMb, backupSizeMb, backupMs }, results };
     writeFileSync(process.env.AIRDESK_PERF_OUT ?? 'perf-results.json', JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
     expect(counts.booking).toBe(N_BOOK);
     expect(counts.fin_document).toBe(3 * N_BOOK);
     expect(counts.audit_log).toBeGreaterThanOrEqual(50_000);
-    // Interactive operations must stay well under a second on this dataset.
-    for (const r of results.filter((x) => !['integrity check (full)', 'supplier volume (year)', 'receivables aging (all customers)'].includes(x.label))) {
+    // Every interactive operation and report must stay under a second on this dataset (the full integrity check is a maintenance task).
+    for (const r of results.filter((x) => x.label !== 'integrity check (full)')) {
       expect(r.medianMs, r.label).toBeLessThan(1000);
     }
   }, 1_800_000);

@@ -269,6 +269,29 @@ try {
     assert.equal(await win.locator('[data-testid=schedule-banner]').count(), 0, 'a customer-requested change raises no notification alert');
   });
 
+  await step('layout-1366x768-and-1920x1080', async () => {
+    // No page may overflow horizontally at the two reference resolutions (wide tables scroll inside their own container).
+    const pages = ['dashboard', 'tickets', 'travel', 'customers', 'suppliers', 'finance', 'reports', 'users', 'company', 'audit', 'system'];
+    for (const size of [{ width: 1366, height: 768 }, { width: 1920, height: 1080 }]) {
+      await win.setViewportSize(size);
+      for (const p of pages) {
+        await win.click(`[data-nav=${p}]`);
+        await win.waitForSelector(`[data-testid=page-${p}]`);
+        const overflow = await win.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        assert.ok(overflow <= 1, `${p} overflows horizontally by ${overflow}px at ${size.width}x${size.height}`);
+      }
+      await win.click('[data-nav=tickets]');
+      await win.click('[data-record] >> nth=0');
+      await win.waitForSelector('[data-testid=page-record]');
+      const overflow = await win.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 1, `record page overflows by ${overflow}px at ${size.width}x${size.height}`);
+      await shot(`record-${size.width}x${size.height}`);
+      await win.click('[data-nav=dashboard]');
+      await shot(`dashboard-${size.width}x${size.height}`);
+    }
+    await win.setViewportSize({ width: 1366, height: 768 });
+  });
+
   await step('global-search-and-english', async () => {
     await win.fill('[data-testid=global-search]', 'ABC123');
     await win.click('[data-testid=global-results] [data-hit=booking]');

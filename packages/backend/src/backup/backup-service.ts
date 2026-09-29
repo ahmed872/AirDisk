@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync, appendFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzip, unzipSync, zip, type Unzipped, type Zippable } from 'fflate';
 import { z } from 'zod';
 import { DomainError, ErrorCode } from '@airdesk/domain';
 import { AuditLog } from '../audit/audit-log';
@@ -107,7 +107,8 @@ export async function createBackupFile(opts: {
   const partPath = `${finalPath}.part`;
   try {
     // 1. Consistent snapshot while the app keeps running (SQLite online backup API).
-    await opts.db.backup(snapshotPath);
+    //    1,000 pages (~4 MB) per step: few steps, each short enough to keep the app responsive.
+    await opts.db.backup(snapshotPath, { progress: () => SNAPSHOT_PAGES_PER_STEP });
     // 2. Verify the snapshot itself before packaging it.
     const snap = openDatabase({ path: snapshotPath, fileMustExist: true, wal: false });
     let facts: ReturnType<typeof describe>;
@@ -131,12 +132,13 @@ export async function createBackupFile(opts: {
       encrypted: false,
       ...facts,
     };
-    const zipped = zipSync({ 'manifest.json': strToU8(JSON.stringify(manifest, null, 2)), 'database.sqlite': new Uint8Array(bytes) }, { level: 6 });
+    // Compression runs on a worker thread (fflate async API) so the app stays responsive.
+    const zipped = await zipAsync({ 'manifest.json': strToU8(JSON.stringify(manifest, null, 2)), 'database.sqlite': new Uint8Array(bytes) });
     // 3. Durable write + atomic rename: a crash never leaves a half file with the final name.
     writeFileDurably(partPath, zipped);
     renameSync(partPath, finalPath);
     // 4. Prove it restores: full validation from the file on disk.
-    const validated = validateBackupFile(finalPath, { maxSchemaVersion: opts.maxSchemaVersion, tempDir: opts.workDir });
+    const validated = checkBackupContents(finalPath, await unzipAsync(new Uint8Array(readFileSync(finalPath))), { maxSchemaVersion: opts.maxSchemaVersion, tempDir: opts.workDir });
     rmSync(validated.tempDbPath, { force: true });
     return { id, filePath: finalPath, sha256: sha256(zipped), sizeBytes: zipped.length, manifest };
   } catch (e) {
@@ -156,16 +158,29 @@ export async function createBackupFile(opts: {
  * audit hash chain and trial balance. Leaves a checked temp copy for restore.
  */
 export function validateBackupFile(filePath: string, opts: { maxSchemaVersion: number; tempDir: string }): ValidatedBackup {
-  const bad = (msg: string, details?: Record<string, unknown>): never => {
-    throw new DomainError(ErrorCode.BACKUP_INVALID, msg, details);
-  };
-  if (!existsSync(filePath)) bad('Backup file not found');
-  let files: Record<string, Uint8Array>;
+  if (!existsSync(filePath)) throw new DomainError(ErrorCode.BACKUP_INVALID, 'Backup file not found');
+  let files: Unzipped | null = null;
   try {
     files = unzipSync(new Uint8Array(readFileSync(filePath)));
   } catch {
-    return bad('The file is not a valid AirDesk backup (damaged or wrong format)');
+    files = null;
   }
+  return checkBackupContents(filePath, files, opts);
+}
+
+const SNAPSHOT_PAGES_PER_STEP = 1000;
+
+const zipAsync = (data: Zippable) =>
+  new Promise<Uint8Array>((resolve, reject) => zip(data, { level: 6 }, (err, out) => (err ? reject(err) : resolve(out))));
+
+const unzipAsync = (data: Uint8Array) =>
+  new Promise<Unzipped | null>((resolve) => unzip(data, (err, out) => resolve(err ? null : out)));
+
+function checkBackupContents(filePath: string, files: Unzipped | null, opts: { maxSchemaVersion: number; tempDir: string }): ValidatedBackup {
+  const bad = (msg: string, details?: Record<string, unknown>): never => {
+    throw new DomainError(ErrorCode.BACKUP_INVALID, msg, details);
+  };
+  if (!files) return bad('The file is not a valid AirDesk backup (damaged or wrong format)');
   const rawManifest = files['manifest.json'];
   const dbBytes = files['database.sqlite'];
   if (!rawManifest || !dbBytes) bad('Backup is missing its manifest or database');

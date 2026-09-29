@@ -125,8 +125,12 @@ export class AppBackend {
   }
 
   dispatch(req: DispatchRequest): Promise<DispatchResponse> {
+    if (req.sessionId) this.lastUserActivityAt = this.opts.clock.now().getTime();
     return dispatchCommand(this, req);
   }
+
+  /** Last time a signed-in user did anything (used to keep automatic backups out of the way). */
+  private lastUserActivityAt = 0;
 
   get svc(): Services {
     return this.services;
@@ -290,11 +294,14 @@ export class AppBackend {
    * successful backup is older than `backup.auto_interval_hours`, then keeps
    * only the newest `backup.keep_scheduled` automatic files. Manual,
    * pre-migration and pre-restore backups are never deleted automatically.
-   * Called by the desktop shell at start-up and hourly.
+   * Called by the desktop shell at start-up and then every few minutes with
+   * `idleMinutes`, so it only runs when nobody has used the app for a while.
    */
-  async runScheduledBackup(): Promise<{ ran: boolean; filePath?: string; pruned: string[] }> {
+  async runScheduledBackup(opts: { idleMinutes?: number } = {}): Promise<{ ran: boolean; filePath?: string; pruned: string[] }> {
     const hours = readSetting(this.db, 'backup.auto_interval_hours');
-    if (hours === 0 || this.restoring || this.automaticBackupRunning || this.services.auth.isSetupRequired()) return { ran: false, pruned: [] };
+    // Never while someone is working: a backup of a large database can hold the app for several seconds.
+    const busy = opts.idleMinutes !== undefined && this.opts.clock.now().getTime() - this.lastUserActivityAt < opts.idleMinutes * 60_000;
+    if (hours === 0 || busy || this.restoring || this.automaticBackupRunning || this.services.auth.isSetupRequired()) return { ran: false, pruned: [] };
     const last = this.lastSuccessfulBackupAt();
     if (last && this.opts.clock.now().getTime() - Date.parse(last) < hours * 3_600_000) return { ran: false, pruned: [] };
     this.automaticBackupRunning = true;

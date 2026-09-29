@@ -39,3 +39,15 @@ describe('Automatic backups', () => {
     expect((await env.backend.runScheduledBackup()).ran).toBe(false);
   });
 });
+
+describe('Automatic backups stay out of the way', () => {
+  it('waits until nobody has used the app for the idle period', async () => {
+    const { env, adminSession: s } = await ready();
+    await ok(env, 'customers.list', {}, s); // user activity now
+    expect((await env.backend.runScheduledBackup({ idleMinutes: 5 })).ran).toBe(false);
+    env.clock.advance(4 * 60_000);
+    expect((await env.backend.runScheduledBackup({ idleMinutes: 5 })).ran).toBe(false);
+    env.clock.advance(2 * 60_000);
+    expect((await env.backend.runScheduledBackup({ idleMinutes: 5 })).ran).toBe(true);
+  });
+});

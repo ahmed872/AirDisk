@@ -127,16 +127,20 @@ function registerPickBackupIpc(): void {
   });
 }
 
-/** Automatic backups (owner decision Q12): checked shortly after start and then every hour. */
+/**
+ * Automatic backups (owner decision Q12): checked at start-up (before anyone
+ * is working) and then every 10 minutes, running only after 5 minutes without
+ * user activity so a backup never interrupts work.
+ */
 function scheduleAutomaticBackups(): void {
-  const run = () => {
-    backend?.runScheduledBackup().then(
+  const run = (idleMinutes?: number) => {
+    backend?.runScheduledBackup(idleMinutes === undefined ? {} : { idleMinutes }).then(
       (r) => { if (r.ran) logger?.info('Automatic backup created', { filePath: r.filePath, pruned: r.pruned.length }); },
       (e: Error) => logger?.error('Automatic backup failed', { error: e.message }),
     );
   };
-  setTimeout(run, 60_000).unref();
-  setInterval(run, 3_600_000).unref();
+  setTimeout(() => run(), 5_000).unref();
+  setInterval(() => run(5), 600_000).unref();
 }
 
 function hardenSessions(): void {
