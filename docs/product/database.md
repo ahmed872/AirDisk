@@ -1,4 +1,4 @@
-# AirDesk — Database (schema 6)
+# AirDesk — Database (schema 7)
 
 SQLite via `better-sqlite3-multiple-ciphers` 12 (SQLite 3.53.4, SQLite3 Multiple Ciphers 2.4.0). **Encrypted at rest** since 1.0.0-rc.2: SQLCipher v4 page format, AES-256 + HMAC-SHA512 per page, a raw 256-bit data key ([encryption-plan.md](encryption-plan.md)). WAL journal, `synchronous=FULL`, `foreign_keys=ON`, all tables `STRICT`, ULID primary keys, money as integer minor units, dates as ISO-8601 text. The Phase 0 reference schema is [schema-draft.sql](../phase-0/schema-draft.sql); `validate_schema.py` (28 checks) still passes against it.
 
@@ -14,8 +14,9 @@ Forward-only, append-only, each applied in its own transaction, recorded in `sch
 | 4 | performance_indexes | Indexes found missing by the performance test: `ticket(issue_date)`, `fin_document_line(passenger_id)`, `cancellation_request(requested_at)`. |
 | 5 | ledger_completion | `fin_document.counter_money_account_id` (receiving account of a transfer) with triggers allowing it only on `MONEY_TRANSFER` and only when different from the source; indexes on it and on `(doc_type, reason_code)`. |
 | 6 | drop_doc_type_index | Removes the `(doc_type, reason_code)` index from migration 5: it made per-supplier queries choose a slow plan (supplier volume report 2.9 s → 0.15 s on the performance dataset). |
+| 7 | booking_attachments | `booking_attachment`: ticket files (PDF, Word, JPG/PNG, ≤ 15 MB) stored as BLOBs inside the encrypted database, with name, detected type, size, SHA-256, note, uploader. Triggers: never deleted (only marked removed with who/when/why), content immutable, removed once. |
 
-Upgrade path verified by tests: a Phase 2 database (schema 2) with real data is upgraded to schema 6; the pre-migration backup exists and validates; integrity checks pass.
+Upgrade path verified by tests: a Phase 2 database (schema 2) with real data is upgraded to the current schema; the pre-migration backup exists and validates; integrity checks pass.
 
 ## 2. Main tables by area
 
@@ -62,4 +63,4 @@ See [performance.md](performance.md): a database with 10,000 ticket records, 20,
 | `backup-history.jsonl` | Backup/restore history with audit-chain checkpoints (`auditSeq`, `auditHeadHash`) |
 | `logs/` | Application logs (no customer data, no secrets) |
 
-The database also stores its recovery wrap in `app_setting` (`security.recovery_wrap`). Integrity checks gained `INV-9.audit_tail` (records cut off the end of the audit log) and `INV-9.audit_anchors` (the chain still contains every checkpoint recorded since the last restore). No schema migration was needed: schema version stays 6.
+The database also stores its recovery wrap in `app_setting` (`security.recovery_wrap`). Integrity checks gained `INV-9.audit_tail` (records cut off the end of the audit log) and `INV-9.audit_anchors` (the chain still contains every checkpoint recorded since the last restore). Encryption needed no schema migration.

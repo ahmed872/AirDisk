@@ -293,6 +293,10 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
 
   'bookings.list': { access: perm('booking.view'), run: (ctx, i) => ctx.backend.svc.bookings.list(actor(ctx), i) },
   'bookings.get': { access: perm('booking.view'), run: (ctx, i) => ctx.backend.svc.bookings.get(actor(ctx), i.id) },
+  'bookings.agentOptions': { access: perm('booking.view_all'), run: (ctx) => ctx.backend.svc.bookings.agentOptions(actor(ctx)) },
+  'attachments.list': { access: perm('booking.view'), run: (ctx, i) => ctx.backend.svc.attachments.list(actor(ctx), i.bookingId) },
+  'attachments.add': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.attachments.add(actor(ctx), i) },
+  'attachments.remove': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.attachments.remove(actor(ctx), i.id, i.reason) },
   'bookings.create': { access: perm('booking.create'), run: (ctx, i) => ctx.backend.svc.bookings.create(actor(ctx), i) },
   'bookings.update': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.update(actor(ctx), i.id, i.rowVersion, i.patch) },
   'bookings.savePassenger': { access: perm('booking.edit'), run: (ctx, i) => ctx.backend.svc.bookings.savePassenger(actor(ctx), i.bookingId, i.passengerId ?? null, i.passenger) },

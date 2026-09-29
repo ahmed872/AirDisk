@@ -207,3 +207,6 @@ table.lines tfoot th { background: #f6f8fa; }
 /* Input with an inline action button (e.g. restore file picker) */
 .input-with-button { display: flex; gap: 8px; align-items: stretch; }
 .input-with-button input { flex: 1; min-width: 0; }
+
+.row-actions { white-space: nowrap; }
+.row-actions > * + * { margin-inline-start: 6px; }

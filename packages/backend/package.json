@@ -1,6 +1,6 @@
 {
   "name": "@airdesk/backend",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "private": true,
   "description": "Application services, persistence (SQLite), migrations, audit, backup. Transport-agnostic.",
   "type": "module",

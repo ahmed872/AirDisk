@@ -8,4 +8,6 @@ export interface AirDeskBridge {
   exportPdf(fileName: string): Promise<{ ok: boolean; code?: string }>;
   exportCsv(fileName: string, content: string): Promise<{ ok: boolean; code?: string }>;
   pickBackupFile(): Promise<string | null>;
+  /** Opens (temporary copy) or saves (user picks the place) a ticket file attached to a record; audited. */
+  openAttachment(attachmentId: string, mode: 'open' | 'save'): Promise<{ ok: boolean; code?: string }>;
 }

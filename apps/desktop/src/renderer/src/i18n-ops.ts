@@ -484,6 +484,37 @@ export const OPS = {
   bs_FAILED: ['فشلت', 'Failed'],
   bs_RUNNING: ['جارية', 'Running'],
 
+  // ── Filters & ticket files ──
+  dateOf: ['التاريخ حسب', 'Date of'],
+  dateRecorded: ['تاريخ التسجيل', 'Recorded'],
+  dateIssued: ['تاريخ الإصدار', 'Ticketed'],
+  dateTravel: ['تاريخ السفر', 'Travel'],
+  paymentFilter: ['الدفع', 'Payment'],
+  payf_DUE: ['عليه مبلغ متبقٍ', 'Amount due'],
+  payf_SETTLED: ['مدفوع بالكامل', 'Fully paid'],
+  payf_CREDIT: ['له رصيد دائن', 'In credit'],
+  moreFilters: ['فلاتر أكثر', 'More filters'],
+  clearFilters: ['مسح الفلاتر', 'Clear filters'],
+  salesAgent: ['موظف المبيعات', 'Sales agent'],
+  ticketFile: ['ملف التذكرة', 'Ticket file'],
+  ticketFiles: ['ملفات التذكرة', 'Ticket files'],
+  withFile: ['مرفوع له ملف', 'Has a file'],
+  withoutFile: ['بدون ملف', 'No file yet'],
+  needsFollowUp: ['تغيير موعد يحتاج متابعة', 'Schedule change needs follow-up'],
+  resultsCount: ['{n} سجل', '{n} record(s)'],
+  ticketFilesHint: ['ارفع ملف التذكرة كما وصلك من شركة الطيران أو المورد (PDF أو Word أو صورة، حتى 15 ميجابايت). يُحفظ مشفّرًا داخل البرنامج ويدخل في النسخ الاحتياطية.',
+    'Attach the ticket as you received it from the airline or supplier (PDF, Word or an image, up to 15 MB). It is stored encrypted inside AirDesk and included in backups.'],
+  uploadFile: ['رفع ملف…', 'Upload file…'],
+  fileNote: ['ملاحظة (اختياري)', 'Note (optional)'],
+  openFile: ['فتح', 'Open'],
+  saveFileAs: ['حفظ باسم…', 'Save as…'],
+  removeFile: ['إزالة', 'Remove'],
+  removeFileReason: ['سبب إزالة الملف (مثلًا: ملف خاطئ)', 'Why remove this file (e.g. wrong file)'],
+  noFiles: ['لا توجد ملفات مرفوعة لهذا السجل بعد.', 'No files attached to this record yet.'],
+  uploadedBy: ['رفعه', 'Uploaded by'],
+  fileUploaded: ['تم رفع الملف', 'File uploaded'],
+  fileRemoved: ['تمت إزالة الملف (يبقى في سجل التدقيق)', 'File removed (kept in the audit trail)'],
+
   // ── Encryption & recovery ──
   recoveryTitle: ['الخطوة 3 من 3: حماية البيانات (عبارة الاسترداد)', 'Step 3 of 3: data protection (recovery passphrase)'],
   recoveryIntro: ['يتم تشفير كل بيانات الشركة والنسخ الاحتياطية. عبارة الاسترداد هي الطريقة الوحيدة لفتح البيانات على جهاز جديد أو بعد إعادة تثبيت ويندوز أو من نسخة احتياطية.',
@@ -556,6 +587,8 @@ export const PASSPHRASE_REASONS = {
 } as const satisfies Record<string, readonly [string, string]>;
 
 export const OPS_REASONS = {
+  FILE_TYPE: ['نوع الملف غير مسموح: PDF أو Word (.doc / .docx) أو صورة (JPG / PNG) فقط، وبنفس امتداده الصحيح', 'File type not allowed: PDF, Word (.doc/.docx) or an image (JPG/PNG) only, with its correct extension'],
+  FILE_TOO_LARGE: ['الملف أكبر من 15 ميجابايت', 'The file is larger than 15 MB'],
   INVALID_TRANSITION: ['هذا الإجراء غير متاح في الحالة الحالية', 'This action is not available in the current status'],
   BOOKING_ISSUED: ['السجل صادر: التعديل يتم بتسوية أو إلغاء موثق', 'The record is ticketed: use an adjustment or cancellation'],
   BOOKING_CLOSED: ['هذا السجل مغلق', 'This record is closed'],

@@ -100,6 +100,13 @@ export interface BookingListQuery {
   to?: string | undefined;
   customerId?: string | undefined;
   unpaidOnly?: boolean | undefined;
+  dateField?: 'BOOKING' | 'ISSUE' | 'TRAVEL' | undefined;
+  supplierId?: string | undefined;
+  airlineId?: string | undefined;
+  agentId?: string | undefined;
+  payment?: 'ALL' | 'DUE' | 'SETTLED' | 'CREDIT' | undefined;
+  attachment?: 'ALL' | 'WITH' | 'WITHOUT' | undefined;
+  attention?: boolean | undefined;
   sortDir: 'asc' | 'desc';
   limit: number;
   offset: number;
@@ -173,10 +180,34 @@ export class BookingService {
       where.push('b.status = ?');
       params.push(q.status);
     }
-    if (q.from) { where.push('b.booking_date >= ?'); params.push(q.from); }
-    if (q.to) { where.push('b.booking_date <= ?'); params.push(q.to); }
+    const dateField = q.dateField ?? 'BOOKING';
+    if (dateField === 'TRAVEL') {
+      if (q.from || q.to) {
+        where.push(`EXISTS (SELECT 1 FROM flight_segment fs WHERE fs.booking_id = b.id AND fs.status <> 'CANCELLED' AND fs.departure_date >= ? AND fs.departure_date <= ?)`);
+        params.push(q.from ?? '0000-01-01', q.to ?? '9999-12-31');
+      }
+    } else {
+      const col = dateField === 'ISSUE' ? 'b.issue_date' : 'b.booking_date';
+      if (q.from) { where.push(`${col} >= ?`); params.push(q.from); }
+      if (q.to) { where.push(`${col} <= ?`); params.push(q.to); }
+    }
     if (q.customerId) { where.push('b.customer_id = ?'); params.push(q.customerId); }
-    if (q.unpaidOnly) where.push(`EXISTS (SELECT 1 FROM journal_line jl WHERE jl.booking_id = b.id AND jl.account_code = '1200' GROUP BY jl.currency_code HAVING SUM(jl.debit_minor - jl.credit_minor) > 0)`);
+    if (q.airlineId) { where.push(`(b.airline_id = ? OR EXISTS (SELECT 1 FROM flight_segment fs WHERE fs.booking_id = b.id AND (fs.marketing_airline_id = ? OR fs.operating_airline_id = ?)))`); params.push(q.airlineId, q.airlineId, q.airlineId); }
+    if (q.supplierId) {
+      where.push(`(b.default_supplier_id = ? OR EXISTS (SELECT 1 FROM booking_price_item pi WHERE pi.booking_id = b.id AND pi.supplier_id = ?) OR EXISTS (SELECT 1 FROM ticket tk WHERE tk.booking_id = b.id AND tk.supplier_id = ?))`);
+      params.push(q.supplierId, q.supplierId, q.supplierId);
+    }
+    // Only users who see every record may filter by agent (others only see their own anyway).
+    if (q.agentId && hasAny(actor, 'booking.view_all')) { where.push('b.sales_agent_id = ?'); params.push(q.agentId); }
+    const due = `EXISTS (SELECT 1 FROM journal_line jl WHERE jl.booking_id = b.id AND jl.account_code = '1200' GROUP BY jl.currency_code HAVING SUM(jl.debit_minor - jl.credit_minor) > 0)`;
+    const credit = `EXISTS (SELECT 1 FROM journal_line jl WHERE jl.booking_id = b.id AND jl.account_code = '1200' GROUP BY jl.currency_code HAVING SUM(jl.debit_minor - jl.credit_minor) < 0)`;
+    if (q.unpaidOnly || q.payment === 'DUE') where.push(due);
+    if (q.payment === 'CREDIT') where.push(credit);
+    if (q.payment === 'SETTLED') where.push(`EXISTS (SELECT 1 FROM journal_line jl WHERE jl.booking_id = b.id AND jl.account_code = '1200') AND NOT ${due} AND NOT ${credit}`);
+    const hasFile = `EXISTS (SELECT 1 FROM booking_attachment ba WHERE ba.booking_id = b.id AND ba.removed_at IS NULL)`;
+    if (q.attachment === 'WITH') where.push(hasFile);
+    if (q.attachment === 'WITHOUT') where.push(`NOT ${hasFile}`);
+    if (q.attention) where.push(`EXISTS (SELECT 1 FROM schedule_change sc WHERE sc.booking_id = b.id AND sc.superseded_by_id IS NULL AND sc.notification_status IN ('NOT_NOTIFIED','NOTIFICATION_FAILED'))`);
     const search = searchClause('booking', q.query);
     if (search) { where.push(`b.id IN (${search.sql})`); params.push(...search.params); }
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -205,7 +236,14 @@ export class BookingService {
       airlineName: r.airline_name, saleCurrency: r.sale_currency_code, totalMinor: charged, balanceMinor: balance,
       settlement: pos ? pos.settlement : isPreIssue(r.status) ? 'NOT_CHARGED' : settlementStatus(charged, balance),
       refundStatus: this.refundStatus(r.id), scheduleAttention: this.hasAttention(r.id), agentName: r.agent_name,
+      attachmentCount: (db.prepare('SELECT COUNT(*) AS n FROM booking_attachment WHERE booking_id = ? AND removed_at IS NULL').get(r.id) as { n: number }).n,
     };
+  }
+
+  /** Sales agents that appear on records (for the agent filter; only for users who see every record). */
+  agentOptions(actor: Actor): { id: string; name: string }[] {
+    requirePermission(this.deps, actor, 'booking.view_all', 'bookings.agentOptions');
+    return (this.deps.db.prepare(`SELECT DISTINCT u.id, u.display_name AS name FROM booking b JOIN app_user u ON u.id = b.sales_agent_id ORDER BY u.display_name`).all() as { id: string; name: string }[]);
   }
 
   get(actor: Actor, id: string): BookingDto {

@@ -413,6 +413,19 @@ export interface BookingListItemDto {
   refundStatus: RefundStatusDto;
   scheduleAttention: boolean;
   agentName: string | null;
+  /** Ticket files attached to the record (e-ticket PDF/Word/image). */
+  attachmentCount: number;
+}
+
+export interface AttachmentDto {
+  id: string;
+  bookingId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  note: string | null;
+  createdAt: string;
+  createdBy: string | null;
 }
 
 export interface PassengerDto {

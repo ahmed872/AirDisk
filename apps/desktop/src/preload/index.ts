@@ -13,4 +13,6 @@ contextBridge.exposeInMainWorld('airdesk', {
   exportCsv: (fileName: string, content: string) => ipcRenderer.invoke('airdesk:export', 'csv', fileName, content),
   /** Opens a file dialog for a .adbk backup (Admin restore only); returns the chosen path or null. */
   pickBackupFile: () => ipcRenderer.invoke('airdesk:pick-backup'),
+  /** Opens (temporary copy, removed when AirDesk closes) or saves a ticket file attached to a record; access-checked and audited in the main process. */
+  openAttachment: (attachmentId: string, mode: 'open' | 'save') => ipcRenderer.invoke('airdesk:attachment', attachmentId, mode),
 });

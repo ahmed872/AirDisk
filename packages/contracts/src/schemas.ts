@@ -315,10 +315,21 @@ export const commandSchemas = {
       query: z.string().max(100).optional(),
       status: z.enum(['ALL', 'OPEN', 'DRAFT', 'RESERVED', 'ISSUED', 'PARTIALLY_CANCELLED', 'CANCELLED', 'VOIDED', 'DISCARDED']).default('ALL'),
       from: isoDate.optional(), to: isoDate.optional(), customerId: ulid.optional(), unpaidOnly: z.boolean().optional(),
+      /** Which date from/to apply to: when the record was made, when the ticket was confirmed issued, or the travel date. */
+      dateField: z.enum(['BOOKING', 'ISSUE', 'TRAVEL']).default('BOOKING'),
+      supplierId: ulid.optional(), airlineId: ulid.optional(), agentId: ulid.optional(),
+      payment: z.enum(['ALL', 'DUE', 'SETTLED', 'CREDIT']).default('ALL'),
+      attachment: z.enum(['ALL', 'WITH', 'WITHOUT']).default('ALL'),
+      attention: z.boolean().optional(),
       sortDir: z.enum(['asc', 'desc']).default('desc'), limit: z.number().int().min(1).max(200).default(50), offset: z.number().int().min(0).default(0),
     })
     .strict(),
   'bookings.get': idOnly,
+  'bookings.agentOptions': z.object({}).strict(),
+  'attachments.list': z.object({ bookingId: ulid }).strict(),
+  /** Ticket file (PDF, Word, JPG/PNG) as base64, at most 15 MB decoded; the type is checked from the content on the backend. */
+  'attachments.add': z.object({ bookingId: ulid, fileName: z.string().min(1).max(260), contentBase64: z.string().min(4).max(21_000_000), note: s(500) }).strict(),
+  'attachments.remove': z.object({ id: ulid, reason: z.string().trim().min(3).max(500) }).strict(),
   'bookings.create': z
     .object({
       customerId: ulid, pnr: s(10), saleCurrency: currencyCode.optional().nullable(), airlineId: ulid.optional().nullable(), supplierId: ulid.optional().nullable(),

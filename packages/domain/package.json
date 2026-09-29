@@ -1,6 +1,6 @@
 {
   "name": "@airdesk/domain",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "private": true,
   "description": "Pure business rules: money, currency, ledger, posting rules, permissions. No I/O.",
   "type": "module",

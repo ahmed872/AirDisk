@@ -8,6 +8,7 @@ import { CurrencySelect, MoneyInput, useMoney } from '../money';
 import { useFmt } from '../prefs';
 import { DocumentPrint, RecordPrint } from '../print';
 import { PaymentDialog, type PayKind } from './payments';
+import { AttachmentsSection } from './attachments';
 
 type Can = (p: string) => boolean;
 type Dialog =
@@ -273,6 +274,8 @@ export function RecordPage({ id, can, onBack }: { id: string; can: Can; onBack: 
           )}
         </section>
       )}
+
+      <AttachmentsSection bookingId={b.id} canEdit={can('booking.edit')} />
 
       {b.documents.length > 0 && (
         <section className="card section">

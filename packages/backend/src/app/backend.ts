@@ -42,6 +42,7 @@ import { FinanceService } from '../services/finance-service';
 import { OperationsService } from '../services/operations-service';
 import { ReferenceService } from '../services/reference-service';
 import { ReportService } from '../services/report-service';
+import { AttachmentService } from '../services/attachment-service';
 import { systemClock, type Clock } from '../util/clock';
 import { createUlidGenerator, type IdGenerator } from '../util/ids';
 import { consoleLogger, type Logger } from '../util/logger';
@@ -84,6 +85,7 @@ export interface Services {
   finance: FinanceService;
   operations: OperationsService;
   reports: ReportService;
+  attachments: AttachmentService;
 }
 
 export const DB_FILE_NAME = 'airdesk.db';
@@ -249,6 +251,7 @@ export class AppBackend {
     svc.finance = new FinanceService(deps, company, currencies, svc.posting, svc.bookings, svc.reference);
     svc.operations = new OperationsService(deps, company, svc.bookings);
     svc.reports = new ReportService(deps, company, svc.ledger, svc.bookings);
+    svc.attachments = new AttachmentService(deps, svc.bookings);
     return svc;
   }
 

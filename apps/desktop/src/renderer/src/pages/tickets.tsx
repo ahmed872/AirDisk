@@ -10,6 +10,17 @@ import { useFmt } from '../prefs';
 type Can = (p: string) => boolean;
 const PAGE = 50;
 
+interface Filters {
+  dateField: 'BOOKING' | 'ISSUE' | 'TRAVEL';
+  payment: 'ALL' | 'DUE' | 'SETTLED' | 'CREDIT';
+  attachment: 'ALL' | 'WITH' | 'WITHOUT';
+  supplierId: string | null;
+  airlineId: string | null;
+  agentId: string | null;
+  attention: boolean;
+}
+const NO_FILTERS: Filters = { dateField: 'BOOKING', payment: 'ALL', attachment: 'ALL', supplierId: null, airlineId: null, agentId: null, attention: false };
+
 /** List of ticket records (the office's records of externally booked/issued tickets). */
 export function TicketsPage({ can, open, presetCustomerId }: { can: Can; open: (id: string) => void; presetCustomerId?: string | null }) {
   const { t } = useI18n();
@@ -18,16 +29,26 @@ export function TicketsPage({ can, open, presetCustomerId }: { can: Can; open: (
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [status, setStatus] = useState('OPEN');
-  const [unpaid, setUnpaid] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [f, setF] = useState<Filters>(NO_FILTERS);
+  const [showMore, setShowMore] = useState(false);
   const [offset, setOffset] = useState(0);
   const [creating, setCreating] = useState(false);
+  const suppliers = useSuppliers();
+  const airlines = useAirlines();
+  const canAll = can('booking.view_all');
+  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => { if (canAll) call<{ id: string; name: string }[]>('bookings.agentOptions').then(setAgents, () => setAgents([])); }, [canAll]);
   useEffect(() => { const h = setTimeout(() => { setDebounced(query); setOffset(0); }, 250); return () => clearTimeout(h); }, [query]);
+  const setFilter = (patch: Partial<Filters>) => { setF({ ...f, ...patch }); setOffset(0); };
+  const active = Object.entries(f).filter(([k, v]) => v !== NO_FILTERS[k as keyof Filters]).length + (from ? 1 : 0) + (to ? 1 : 0) + (status !== 'OPEN' ? 1 : 0);
+  const clearAll = () => { setF(NO_FILTERS); setFrom(''); setTo(''); setStatus('OPEN'); setQuery(''); setOffset(0); };
   const list = useLoader(() => call<PageDto<BookingListItemDto>>('bookings.list', {
-    query: debounced || undefined, status, unpaidOnly: unpaid || undefined, from: from || undefined, to: to || undefined,
+    query: debounced || undefined, status, from: from || undefined, to: to || undefined, dateField: f.dateField, payment: f.payment, attachment: f.attachment,
+    supplierId: f.supplierId ?? undefined, airlineId: f.airlineId ?? undefined, agentId: f.agentId ?? undefined, attention: f.attention || undefined,
     customerId: presetCustomerId ?? undefined, limit: PAGE, offset,
-  }), [debounced, status, unpaid, from, to, offset, presetCustomerId]);
+  }), [debounced, status, from, to, f, offset, presetCustomerId]);
   const items = list.data?.items ?? [];
   return (
     <div className="page" data-testid="page-tickets">
@@ -43,10 +64,41 @@ export function TicketsPage({ can, open, presetCustomerId }: { can: Can; open: (
             {['DRAFT', 'RESERVED', 'ISSUED', 'PARTIALLY_CANCELLED', 'CANCELLED', 'VOIDED', 'DISCARDED'].map((s) => <option key={s} value={s}>{t(`st_${s}` as TKey)}</option>)}
           </select>
         </label>
-        <label className="inline">{t('from')}<input type="date" className="ltr" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-        <label className="inline">{t('to')}<input type="date" className="ltr" value={to} onChange={(e) => setTo(e.target.value)} /></label>
-        <label className="check"><input type="checkbox" checked={unpaid} onChange={(e) => setUnpaid(e.target.checked)} />{t('unpaidOnly')}</label>
+        <label className="inline">{t('dateOf')}
+          <select value={f.dateField} onChange={(e) => setFilter({ dateField: e.target.value as Filters['dateField'] })} data-testid="date-field">
+            <option value="BOOKING">{t('dateRecorded')}</option><option value="ISSUE">{t('dateIssued')}</option><option value="TRAVEL">{t('dateTravel')}</option>
+          </select>
+        </label>
+        <label className="inline">{t('from')}<input type="date" className="ltr" value={from} onChange={(e) => { setFrom(e.target.value); setOffset(0); }} data-testid="filter-from" /></label>
+        <label className="inline">{t('to')}<input type="date" className="ltr" value={to} onChange={(e) => { setTo(e.target.value); setOffset(0); }} data-testid="filter-to" /></label>
+        <label className="inline">{t('paymentFilter')}
+          <select value={f.payment} onChange={(e) => setFilter({ payment: e.target.value as Filters['payment'] })} data-testid="payment-filter">
+            <option value="ALL">{t('all')}</option><option value="DUE">{t('payf_DUE')}</option><option value="SETTLED">{t('payf_SETTLED')}</option><option value="CREDIT">{t('payf_CREDIT')}</option>
+          </select>
+        </label>
+        <button type="button" onClick={() => setShowMore(!showMore)} aria-expanded={showMore} data-testid="more-filters">{t('moreFilters')}{active ? ` (${active})` : ''}</button>
+        {active > 0 && <button type="button" className="link" onClick={clearAll} data-testid="clear-filters">{t('clearFilters')}</button>}
       </div>
+      {showMore && (
+        <div className="toolbar" data-testid="more-filters-panel">
+          <SupplierSelect label={t('supplier')} value={f.supplierId} onChange={(v) => setFilter({ supplierId: v })} suppliers={suppliers} testId="filter-supplier" emptyLabel={t('all')} />
+          <AirlineSelect label={t('airline')} value={f.airlineId} onChange={(v) => setFilter({ airlineId: v })} airlines={airlines} testId="filter-airline" emptyLabel={t('all')} />
+          {canAll && (
+            <label>{t('salesAgent')}
+              <select value={f.agentId ?? ''} onChange={(e) => setFilter({ agentId: e.target.value || null })} data-testid="filter-agent">
+                <option value="">{t('all')}</option>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+          )}
+          <label>{t('ticketFile')}
+            <select value={f.attachment} onChange={(e) => setFilter({ attachment: e.target.value as Filters['attachment'] })} data-testid="filter-attachment">
+              <option value="ALL">{t('all')}</option><option value="WITH">{t('withFile')}</option><option value="WITHOUT">{t('withoutFile')}</option>
+            </select>
+          </label>
+          <label className="check"><input type="checkbox" checked={f.attention} onChange={(e) => setFilter({ attention: e.target.checked })} data-testid="filter-attention" />{t('needsFollowUp')}</label>
+        </div>
+      )}
+      {list.data && <p className="muted small" data-testid="result-count">{t('resultsCount').replace('{n}', String(list.data.total))}</p>}
       {list.error && <LoadError error={list.error} onRetry={list.reload} />}
       {!list.loading && !list.error && items.length === 0 && <EmptyState text={t(debounced ? 'emptySearch' : 'emptyList')} />}
       {items.length > 0 && (
@@ -65,7 +117,8 @@ export function TicketsPage({ can, open, presetCustomerId }: { can: Can; open: (
                 <td><span className="badge" data-status={r.status}>{t(`st_${r.status}` as TKey)}</span>{r.refundStatus !== 'NONE' && <span className="badge warn">{t(`rf_${r.refundStatus}` as TKey)}</span>}</td>
                 <td className="num ltr">{m.fmt(r.totalMinor, r.saleCurrency)}</td>
                 <td className={`num ltr ${r.balanceMinor > 0 ? 'due-text' : ''}`}>{r.status === 'DRAFT' || r.status === 'RESERVED' ? '' : m.fmt(r.balanceMinor, r.saleCurrency)}</td>
-                <td>{r.scheduleAttention && <span className="badge bad" title={t('scheduleChangedBanner')} data-testid="attention">⚠</span>}</td>
+                <td>{r.scheduleAttention && <span className="badge bad" title={t('scheduleChangedBanner')} data-testid="attention">⚠</span>}
+                  {r.attachmentCount > 0 && <span className="badge" title={t('ticketFiles')} data-testid="has-file">📎 {r.attachmentCount}</span>}</td>
               </tr>
             ))}</tbody>
           </table>

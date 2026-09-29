@@ -5,6 +5,7 @@ import m0003 from './0003_operations.sql?raw';
 import m0004 from './0004_performance_indexes.sql?raw';
 import m0005 from './0005_ledger_completion.sql?raw';
 import m0006 from './0006_drop_doc_type_index.sql?raw';
+import m0007 from './0007_booking_attachments.sql?raw';
 
 /**
  * Forward-only, append-only list. NEVER edit a released migration: the
@@ -18,4 +19,5 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 4, name: 'performance_indexes', sql: m0004 },
   { version: 5, name: 'ledger_completion', sql: m0005 },
   { version: 6, name: 'drop_doc_type_index', sql: m0006 },
+  { version: 7, name: 'booking_attachments', sql: m0007 },
 ];

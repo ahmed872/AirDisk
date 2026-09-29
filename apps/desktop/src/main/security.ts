@@ -47,6 +47,8 @@ export const EXPORT_CHANNEL = 'airdesk:export';
 /** Lets the user pick a backup file to restore; returns only the chosen path. */
 export const PICK_BACKUP_CHANNEL = 'airdesk:pick-backup';
 export const MAX_EXPORT_TEXT = 10 * 1024 * 1024;
+/** Opens or saves a ticket file attached to a record (main process fetches it from the backend itself). */
+export const ATTACHMENT_CHANNEL = 'airdesk:attachment';
 
 /**
  * Suggested file name for a user-confirmed export: no path separators, no

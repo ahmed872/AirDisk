@@ -5,8 +5,8 @@ import { AppLauncher, type AppBackend, type Logger } from '@airdesk/backend';
 import { createDeviceKeyStore } from './device-keys';
 import { createFileLogger } from './file-logger';
 import { resolveDataDir } from './paths';
-import { writeFileSync } from 'node:fs';
-import { CONTENT_SECURITY_POLICY, EXPORT_CHANNEL, IPC_CHANNEL, PICK_BACKUP_CHANNEL, MAX_EXPORT_TEXT, isAllowedExternalUrl, sanitizeExportName, secureWebPreferences } from './security';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { ATTACHMENT_CHANNEL, CONTENT_SECURITY_POLICY, EXPORT_CHANNEL, IPC_CHANNEL, PICK_BACKUP_CHANNEL, MAX_EXPORT_TEXT, isAllowedExternalUrl, sanitizeExportName, secureWebPreferences } from './security';
 import { runSmokeTest, type SmokePhase } from './smoke-test';
 
 let launcher: AppLauncher | null = null;
@@ -115,6 +115,40 @@ function registerExportIpc(): void {
   });
 }
 
+/** Temporary copies of opened ticket files; removed when AirDesk closes. */
+let attachmentTempDir: string | null = null;
+
+function registerAttachmentIpc(): void {
+  ipcMain.handle(ATTACHMENT_CHANNEL, async (event, attachmentId: unknown, mode: unknown) => {
+    const backend = current();
+    if (!backend || !isTrustedSender(event.senderFrame?.url ?? '')) return { ok: false, code: 'FORBIDDEN' };
+    if (typeof attachmentId !== 'string' || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(attachmentId) || (mode !== 'open' && mode !== 'save')) return { ok: false, code: 'VALIDATION' };
+    const sid = sessionByWebContents.get(event.sender.id);
+    let file;
+    try {
+      const actor = backend.svc.sessions.resolve(sid ?? null);
+      file = backend.svc.attachments.content({ ...actor, workstation: hostname() }, attachmentId);
+    } catch (e) {
+      return { ok: false, code: (e as { code?: string }).code ?? 'FORBIDDEN' };
+    }
+    const ext = file.fileName.split('.').pop() ?? 'bin';
+    if (mode === 'save') {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const choice = await dialog.showSaveDialog(win!, { defaultPath: file.fileName, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+      if (choice.canceled || !choice.filePath) return { ok: false, code: 'CANCELLED' };
+      writeFileSync(choice.filePath, file.bytes);
+      return { ok: true };
+    }
+    attachmentTempDir ??= mkdtempSync(join(app.getPath('temp'), 'AirDesk-files-'));
+    const dir = mkdtempSync(join(attachmentTempDir, 'f-'));
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, file.fileName);
+    writeFileSync(path, file.bytes);
+    const err = await shell.openPath(path);
+    return err ? { ok: false, code: 'OPEN_FAILED' } : { ok: true };
+  });
+}
+
 function registerPickBackupIpc(): void {
   ipcMain.handle(PICK_BACKUP_CHANNEL, async (event) => {
     if (!launcher || !isTrustedSender(event.senderFrame?.url ?? '')) return null;
@@ -177,6 +211,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   launcher?.close();
   launcher = null;
+  if (attachmentTempDir) rmSync(attachmentTempDir, { recursive: true, force: true });
 });
 
 void app.whenReady().then(async () => {
@@ -212,6 +247,7 @@ void app.whenReady().then(async () => {
   registerIpc();
   registerExportIpc();
   registerPickBackupIpc();
+  registerAttachmentIpc();
   createWindow();
   scheduleAutomaticBackups();
 });

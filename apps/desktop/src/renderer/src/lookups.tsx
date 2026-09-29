@@ -17,24 +17,24 @@ export function useAirlines(): AirlineDto[] {
   return list;
 }
 
-export function SupplierSelect({ value, onChange, label, suppliers, testId, disabled }: { value: string | null; onChange: (id: string | null) => void; label: string; suppliers: SupplierDto[]; testId?: string; disabled?: boolean }) {
+export function SupplierSelect({ value, onChange, label, suppliers, testId, disabled, emptyLabel }: { value: string | null; onChange: (id: string | null) => void; label: string; suppliers: SupplierDto[]; testId?: string; disabled?: boolean; emptyLabel?: string }) {
   const { t } = useI18n();
   return (
     <label>{label}
       <select value={value ?? ''} disabled={disabled} onChange={(e) => onChange(e.target.value || null)} data-testid={testId}>
-        <option value="">{t('none')}</option>
+        <option value="">{emptyLabel ?? t('none')}</option>
         {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.supplierNo})</option>)}
       </select>
     </label>
   );
 }
 
-export function AirlineSelect({ value, onChange, label, airlines, testId, disabled }: { value: string | null; onChange: (id: string | null) => void; label: string; airlines: AirlineDto[]; testId?: string; disabled?: boolean }) {
+export function AirlineSelect({ value, onChange, label, airlines, testId, disabled, emptyLabel }: { value: string | null; onChange: (id: string | null) => void; label: string; airlines: AirlineDto[]; testId?: string; disabled?: boolean; emptyLabel?: string }) {
   const { t, locale } = useI18n();
   return (
     <label>{label}
       <select value={value ?? ''} disabled={disabled} onChange={(e) => onChange(e.target.value || null)} data-testid={testId}>
-        <option value="">{t('none')}</option>
+        <option value="">{emptyLabel ?? t('none')}</option>
         {airlines.map((a) => <option key={a.id} value={a.id}>{a.iataCode ?? '—'} · {locale === 'ar' && a.nameAr ? a.nameAr : a.nameEn}</option>)}
       </select>
     </label>

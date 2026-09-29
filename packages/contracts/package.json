@@ -1,6 +1,6 @@
 {
   "name": "@airdesk/contracts",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "private": true,
   "description": "Command names, input schemas (zod) and DTO types shared by backend and renderer.",
   "type": "module",

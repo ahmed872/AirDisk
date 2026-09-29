@@ -9,7 +9,8 @@
  */
 import { _electron as electron } from 'playwright-core';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { Buffer } from 'node:buffer';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -303,6 +304,42 @@ try {
     await win.waitForSelector('[data-testid=report-table]');
     assert.match(await text('[data-testid=report-table]'), /رصيد أول المدة|TRF-\d{4}-000001/);
     await shot('cash-book');
+  });
+
+  await step('ticket-file-upload-save-and-filters', async () => {
+    // Attach the e-ticket PDF to the record, save it back out, then find records by file / payment filters.
+    const pdf = Buffer.from('%PDF-1.4\n% E2E e-ticket 0779991234567\n%%EOF\n', 'latin1');
+    const src = join(dataDir, '..', `e2e-eticket-${Date.now()}.pdf`);
+    writeFileSync(src, pdf);
+    await win.click('[data-nav=tickets]');
+    await win.click('[data-record] >> nth=0');
+    await win.waitForSelector('[data-testid=ticket-files]');
+    await win.fill('[data-testid=file-note]', 'كما وصلت من شركة الطيران');
+    await win.setInputFiles('[data-testid=file-input]', src);
+    await win.waitForSelector('[data-testid=files-table] tr[data-file$=".pdf"]');
+    assert.match(await text('[data-testid=ticket-files]'), /كما وصلت من شركة الطيران/);
+    // "Save as" goes through the main process; the native dialog is answered by the test.
+    const target = join(dataDir, '..', `e2e-saved-${Date.now()}.pdf`);
+    await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, target);
+    await win.click('[data-testid=file-save]');
+    await win.waitForFunction((p) => !!p, target);
+    for (let i = 0; i < 50 && !existsSync(target); i++) await win.waitForTimeout(100);
+    assert.ok(readFileSync(target).equals(pdf), 'saved file is byte-identical');
+    await shot('ticket-file');
+    await win.click('[data-nav=tickets]');
+    await win.selectOption('[data-testid=status-filter]', 'ALL');
+    await win.click('[data-testid=more-filters]');
+    await win.selectOption('[data-testid=filter-attachment]', 'WITH');
+    await win.waitForFunction(() => document.querySelectorAll('[data-testid=results] [data-testid=has-file]').length === 1 && document.querySelectorAll('[data-testid=results] tbody tr').length === 1);
+    await win.selectOption('[data-testid=filter-attachment]', 'WITHOUT');
+    await win.waitForFunction(() => document.querySelectorAll('[data-testid=results] [data-testid=has-file]').length === 0);
+    await win.selectOption('[data-testid=date-field]', 'TRAVEL');
+    await win.fill('[data-testid=filter-from]', '2000-01-01');
+    await win.fill('[data-testid=filter-to]', '2000-01-02');
+    await win.waitForSelector('[data-testid=empty-state]');
+    await shot('ticket-filters');
+    await win.click('[data-testid=clear-filters]');
+    await win.waitForSelector('[data-testid=results]');
   });
 
   await step('layout-1366x768-and-1920x1080', async () => {

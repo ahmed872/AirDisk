@@ -1,9 +1,9 @@
-# AirDesk release gate: 1.0.0-rc.2
+# AirDesk release gate: 1.0.0-rc.3
 
 **Status: AirDesk 1.0.0 Release Candidate. The code is complete and it is awaiting external release validation.** It is not 1.0.0 and not generally available.
 
 - **Branch:** `claude/loving-rubin-kyf18y`
-- **Version:** `1.0.0-rc.2`
+- **Version:** `1.0.0-rc.3`. It adds ticket files attached to records and ticket-list filters to rc.2. rc.2 was published as an UNSIGNED pre-release by the owner's decision.
 - **Scope (unchanged):** AirDesk records and manages airline tickets and reservations that were booked and issued **outside** it. It does not search flights, reserve seats, create PNRs, issue tickets, or connect to any GDS, airline or consolidator system.
 
 ## 1. Implemented in code (this release)
@@ -127,7 +127,7 @@ The Windows CI job covers:
 The exact steps are in [deployment-and-release.md §9](deployment-and-release.md). They need no code changes.
 
 
-**1.0.0-rc.2 is a general-release candidate on the repository side.** Label it `1.0.0` only after the four external items in §5 are closed, in this order:
+**1.0.0-rc.3 is a general-release candidate on the repository side.** Label it `1.0.0` only after the four external items in §5 are closed, in this order:
 1. The signed installer from `release.yml`.
 2. The physical Windows 10/11 checklist.
 3. The physical clean-PC drill.
