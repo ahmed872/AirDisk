@@ -6,7 +6,8 @@
 pnpm install --frozen-lockfile
 pnpm check        # typecheck + lint + all unit/integration tests
 pnpm e2e          # build + Electron E2E: foundation, Phase 2 (20 steps), operations (14 steps)
-pnpm dist:win     # Windows NSIS installer → apps/desktop/dist/AirDesk-Setup-<version>-x64.exe
+pnpm dist:win     # development installer (UNSIGNED, says so) → apps/desktop/dist/AirDesk-Setup-<version>-x64.exe
+pnpm dist:win:release   # release installer: refuses to build without signing credentials (§7)
 AIRDESK_PERF=1 npx vitest run packages/backend/test/perf.test.ts   # representative-office performance run (~3 min)
 ```
 
@@ -16,13 +17,13 @@ Native modules (`better-sqlite3-multiple-ciphers`, `@node-rs/argon2`) ship N-API
 
 **Linux job:** install → typecheck → lint → tests with coverage → build → Electron smoke test (real runtime, native modules) → E2E foundation → E2E Phase 2 (20 steps incl. restart) → E2E operations (14 steps at 1366×768, incl. real keyboard typing in dialogs, English-mode overflow checks) → screenshots uploaded.
 
-**Windows job (`windows-latest`):** tests on Windows → NSIS build → silent install → version information check (EXE properties, installer properties, Apps & Features entry) → packaged launch creates `%ProgramData%\AirDesk\data\airdesk.db` → packaged smoke test (native SQLite + Argon2, setup, login, master data, posting, **ticket record + payment with Total/Paid/Remaining**, backup, restore, **ticket record intact after backup→restore**, restart) → first-run seed in the real data directory → silent uninstall (program removed, data kept) → reinstall and verify (no second setup, login, customer/supplier/airline, **ticket record and balances**, schema current, integrity) → final uninstall → installer uploaded as an artifact.
+**Windows job (`windows-latest`):** tests on Windows → NSIS build → signing gate refuses a release build without credentials → **upgrade from the real 1.0.0-rc.1 installer** (rc.1 data seeded, new version installed over it, data opens, encryption enabled in place, all records verified) → silent install → version information check (EXE properties, installer properties, Apps & Features entry) → packaged launch on a clean PC writes no database before setup → `%ProgramData%\AirDesk` grants Users modify rights → packaged smoke test (native SQLite + Argon2, setup, login, master data, posting, **ticket record + payment with Total/Paid/Remaining**, backup, restore, **ticket record intact after backup→restore**, restart) → first-run seed in the real data directory → silent uninstall (program removed, data kept) → reinstall and verify (no second setup, login, customer/supplier/airline, **ticket record and balances**, schema current, integrity) → **clean-PC disaster recovery** (program, data folder and the Windows user's device key removed; reinstall; restore the encrypted off-site backup with the recovery passphrase; verify logins, records, balances, reports, a new backup) → final uninstall → installer uploaded as an artifact. Every packaged smoke run also asserts the database is encrypted, backup/integrity jobs ran on the worker thread, DPAPI reopens the data for the same Windows user after reinstall, and no customer/ticket text is readable anywhere in the data folder.
 
 A release candidate is produced only from a commit where both jobs are green.
 
 ## 3. Versioning
 
-- Semantic versioning in `apps/desktop/package.json` (all workspace packages carry the same version). Current: **1.0.0-rc.1**.
+- Semantic versioning in `apps/desktop/package.json` (all workspace packages carry the same version). Current: **1.0.0-rc.2**.
 - Pre-release tags (`-rc.N`) until the release gates in §5 are met; then `1.0.0`.
 - MAJOR: incompatible data/format change requiring a manual step (none planned — migrations are automatic). MINOR: new features/migrations. PATCH: fixes only, no migration.
 - The **database schema version** is independent (currently 6) and shown in *About* together with the list of applied migrations and the app version that applied each.
@@ -35,36 +36,42 @@ A release candidate is produced only from a commit where both jobs are green.
 
 ## 5. Release checklist (gates for 1.0.0)
 
-| Gate | Status in 1.0.0-rc.1 |
+| Gate | Status in 1.0.0-rc.2 |
 |---|---|
-| Linux + Windows CI green on the release commit | ✔ (see final report for run numbers) |
-| Regression suites (Phase 0/1/2 + operations) green | ✔ |
+| Linux + Windows CI green on the release commit | ✔ (run numbers in [release-gate-1.0.0.md](release-gate-1.0.0.md)) |
+| Regression suites (Phase 0/1/2, operations, encryption/recovery, audit tamper, worker) green | ✔ |
 | Performance run on a representative dataset | ✔ ([performance.md](performance.md)) |
-| Code signing with an EV/OV certificate | ✘ not done — needs the owner's certificate; pipeline specified in §7 |
-| Encryption at rest + recovery passphrase flow | ✘ designed, not enabled ([encryption-plan.md](encryption-plan.md)) |
-| Field pilot on physical Windows 10 and 11 PCs (UAC, printers, Arabic fonts, antivirus) | ✘ pending |
-| Clean-machine disaster-recovery drill (new PC restore) with a real office backup | ✘ pending (procedure documented in the admin guide; automated equivalent passes) |
-| User documentation (Arabic) and admin documentation | ✔ |
+| Encryption at rest + recovery passphrase + encrypted backups | ✔ implemented and tested ([encryption-plan.md](encryption-plan.md)) |
+| Automated clean-PC recovery (Windows CI, packaged app) | ✔ |
+| Signing pipeline (environment credentials, gate, verification, protected release workflow) | ✔ implemented; **certificate not yet supplied** |
+| Signed installer produced by `release.yml` and verified | ✘ external: needs the owner's OV/EV certificate or Azure Trusted Signing account |
+| Physical Windows 10 / 11 checklist | ✘ external: [physical-windows-checklist.md](physical-windows-checklist.md) not yet executed |
+| Clean-PC drill with a real office backup on physical hardware | ✘ external: [disaster-recovery.md](disaster-recovery.md) |
+| VAT / e-invoicing decision for the target market | ✘ external business/legal decision ([vat-e-invoicing.md](vat-e-invoicing.md)) |
+
+Version stays `-rc.N` until every ✘ above is closed; then `1.0.0`.
 
 ## 6. White-label
 
 All customer-facing identity comes from **Company settings** (names, logo, address, tax/CR numbers, invoice title and terms, footer). The installer and executable are branded "AirDesk"; a partner edition changes `productName`, `appId`, icons and `copyright` in `apps/desktop/electron-builder.yml` and `package.json`, plus the data folder name, which is hard-coded as `AirDesk` in `apps/desktop/src/main/paths.ts` and `apps/desktop/build/installer.nsh` (change both if a partner edition must keep its data separate).
 
-## 7. Code signing pipeline (not set up — release blocker)
+## 7. Code signing pipeline (implemented — certificate pending)
 
-1.0.0-rc.1 installers are **unsigned**: Windows SmartScreen shows "Windows protected your PC / Unknown publisher", and some antivirus products quarantine unsigned per-machine installers. Nothing in the repository pretends otherwise; CI builds unsigned artifacts.
+Nothing secret is in the repository (`*.pfx`, `*.p12`, `*.cer` are git-ignored). Signing is configured only through the environment:
 
-What the owner must provide and what must be built:
+| Option | Environment / secrets (GitHub environment `release`) |
+|---|---|
+| OV/EV certificate as PFX (token-exportable or CA-issued) | `WIN_CSC_LINK` (path, base64 or https URL), `WIN_CSC_KEY_PASSWORD` |
+| Azure Trusted Signing (cloud HSM, recommended when no hardware token) | secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`; variables `AIRDESK_AZURE_SIGNING_ENDPOINT`, `AIRDESK_AZURE_SIGNING_ACCOUNT`, `AIRDESK_AZURE_CERT_PROFILE`, `AIRDESK_PUBLISHER_NAME` |
+| Optional check of the signer | variable `AIRDESK_SIGNER_SUBJECT` (e.g. `CN=Your Company Ltd`) |
 
-1. **Certificate.** An OV or EV code-signing certificate issued to the legal entity that sells AirDesk (or the white-label partner). Since June 2023 the private key must live on a hardware token/HSM or a cloud signing service (e.g. Azure Trusted Signing, DigiCert KeyLocker, SSL.com eSigner); a `.pfx` file in a CI secret is no longer issued by CAs.
-2. **Release workflow** (`.github/workflows/release.yml`, protected environment `release` with required reviewers, triggered only by a signed `v*` tag):
-   - run the complete CI gates (Linux + Windows jobs) on the tagged commit;
-   - build with `pnpm dist:win`, signing through electron-builder's `win.sign` hook calling the cloud signing tool (or `signtool sign /fd sha256 /tr <RFC 3161 timestamp URL> /td sha256`); sign `AirDesk.exe`, the uninstaller and the installer;
-   - verify with `signtool verify /pa /all` and `Get-AuthenticodeSignature` (status `Valid`, expected publisher) and fail the job otherwise;
-   - repeat the silent install / smoke / uninstall / reinstall steps on the **signed** artifact;
-   - publish SHA-256 checksums next to the installer.
-3. **Secrets** are scoped to the `release` environment only (never available to pull requests or the `ci.yml` jobs).
-4. **Timestamping** is mandatory so signatures remain valid after the certificate expires.
+- `pnpm dist:win` — development/CI build, unsigned, prints "Building UNSIGNED".
+- `pnpm dist:win:release` — sets `AIRDESK_REQUIRE_SIGNING=1`; **fails with a clear message** if credentials are missing, half-configured, or both kinds are set; otherwise electron-builder signs `AirDesk.exe`, the uninstaller and the installer with SHA-256 and an RFC 3161 timestamp.
+- `apps/desktop/scripts/verify-signature.ps1` — fails unless installer and `AirDesk.exe` are `Valid`, timestamped and (optionally) from the expected subject.
+- `.github/workflows/release.yml` — on a `v*.*.*` tag or manual dispatch: full CI gates → build and sign in the protected `release` environment → verify signatures → silent install + packaged smoke test of the **signed** build → SHA-256 checksums → artifact.
+- CI proves the gate refuses unsigned release builds on every run; the signed path runs only when the owner adds the certificate.
+
+**Certificate requirements:** OV or EV code-signing certificate in the name of the selling legal entity (or the white-label partner), private key on a hardware token/HSM or a cloud signing service (CA/B Forum rules since June 2023). EV gives immediate SmartScreen reputation; OV builds reputation over downloads. **Exact external action:** buy the certificate (or create an Azure Trusted Signing account + certificate profile), add the secrets/variables above to the `release` environment with required reviewers, push tag `v1.0.0`.
 
 ## 8. Windows behaviour verified in CI (and what is not)
 

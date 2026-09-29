@@ -1,6 +1,6 @@
 # AirDesk — Installation and Administration Guide
 
-Version 1.0.0-rc.1 · Audience: the person who installs, configures and looks after AirDesk in an office (owner, office manager, IT support). The day-to-day user guide is in Arabic: [user-guide-ar.md](user-guide-ar.md).
+Version 1.0.0-rc.2 · Audience: the person who installs, configures and looks after AirDesk in an office (owner, office manager, IT support). The day-to-day user guide is in Arabic: [user-guide-ar.md](user-guide-ar.md).
 
 > **Scope.** AirDesk records and manages airline-ticket transactions that were booked and issued **outside** the system (GDS, airline portal, consolidator). It does **not** search flights, reserve or hold seats, create PNRs, issue tickets, or connect to any GDS, airline or consolidator system.
 
@@ -74,7 +74,8 @@ Then configure (all under the admin menus):
 - **Audit trail:** every change, login, export, backup and restore is recorded with user, time and before/after values, in a SHA-256 hash chain verified by *Run integrity check*. Passwords never appear; passport/ID numbers are masked.
 - **Electron hardening:** sandboxed renderer, context isolation, no Node in the renderer, strict Content-Security-Policy, no remote content, navigation and new windows blocked (only `wa.me` links open in the external browser), all permission requests denied, Electron fuses (no `RunAsNode`, no inspector, asar integrity validated, app loads only from asar). The renderer's bridge is exactly four functions: `invoke`, `exportPdf`, `exportCsv`, `pickBackupFile`.
 - **Exports:** PDF/CSV only through a user-confirmed Save dialog; CSV needs `report.export`; every export is audited; CSV cells cannot run as spreadsheet formulas.
-- **Encryption at rest is NOT enabled in this version.** The database and backup files are protected by Windows file permissions only. Keep the PC's Windows accounts password-protected, use BitLocker on the disk, and store off-site backup copies securely (see §6). Encrypted databases with a recovery passphrase are designed; the verified library behaviour and the exact implementation steps are in [encryption-plan.md](encryption-plan.md). This is a release blocker for general sale.
+- **Encryption at rest:** the database and every backup are encrypted (AES-256, SQLCipher v4 page format; backups carry sealed, authenticated manifests). New installations are created encrypted; each Windows user who uses AirDesk has the key protected by Windows (DPAPI) so daily start needs no passphrase. The **recovery passphrase** chosen at setup is the only way to open the data on another PC/Windows installation or from a backup — no master password exists. Details: [encryption-plan.md](encryption-plan.md). Still recommended: BitLocker (protects the rest of the disk and deleted-file remnants).
+- **Upgrading from 1.0.0-rc.1:** the existing data stays unencrypted until an Admin clicks **Backup & restore → Data encryption → Enable encryption** (Admin password + new recovery passphrase; everyone is signed out; amounts and history are proven identical before the switch). Afterwards delete the old unencrypted backups with **Delete unencrypted backups**.
 
 ## 6. Backup and restore
 
@@ -97,14 +98,16 @@ Copy the newest `.adbk` from `%ProgramData%\AirDesk\data\backups` to a USB drive
 4. Sign in again. If power fails during the swap, the next start finishes or rolls back the restore automatically.
 
 ### Data recovery on a new PC
-1. Install AirDesk on the new PC.
-2. Complete first-run setup with a **temporary** company name and Admin account.
-3. Sign in as that temporary Admin → **Backup & restore → Restore**, choose the `.adbk` from your off-site copy, enter the temporary Admin's password, type `RESTORE`.
-4. After the restore, sign in with the **original** users and passwords from the backup (the temporary company and Admin are replaced).
-5. Run **Run integrity check**; it must show all checks green.
+Follow [disaster-recovery.md](disaster-recovery.md). In short: install AirDesk → on the first-run screen choose **Restore a backup instead of setting up a new company** → choose the off-site `.adbk` → enter its **recovery passphrase** → type `RESTORE` → sign in with the original users → **Run integrity check** → make a new backup. No temporary company is needed any more. A plain backup from 1.0.0-rc.1 asks for a new recovery passphrase and is encrypted on the way in.
+
+### Restoring a backup protected by another passphrase
+A backup made before a passphrase change (or on another installation) asks for **its** recovery passphrase during restore; the restored data is re-encrypted with this installation's key, so the current passphrase keeps working.
 
 ### Tested
-Backup → destroy/modify → restore → verify is automated in the test suite (scenario L: records, documents, audit chain and balances restored exactly) and on Windows in CI (packaged app: ticket record and Total/Paid/Remaining identical after backup → restore, after restart and after uninstall + reinstall).
+Automated: scenario L and `encryption-recovery.test.ts` (restore on the same PC, on a clean PC, across keys and passphrases, corrupted/altered/truncated backups, damaged database, lost key file, interrupted restore/encryption, migration), and on Windows in CI with the packaged installer (backup → restore, restart, uninstall + reinstall, upgrade from rc.1, clean-PC recovery). Not yet done: the physical drill in [disaster-recovery.md](disaster-recovery.md).
+
+### Backup speed
+Backup verification, compression, re-encryption and the full integrity check run on a background worker thread; the window stays responsive (regression test `backup-worker.test.ts`). Encrypted backups are stored uncompressed (encrypted data does not compress): expect a backup file about the size of the database (a typical office: 10–40 MB; the 10,000-record test office: 140 MB). Keep 14 automatic backups × that size free on the disk.
 
 ## 7. Maintenance
 
@@ -120,6 +123,9 @@ Backup → destroy/modify → restore → verify is automated in the test suite 
 | "AirDesk could not open its database" at start | Read the newest log file. Common causes: disk full; the data folder moved to a network drive (not allowed); database from a newer version (install the newer version). If the file is damaged, restore the newest backup (§6). |
 | A second window does not open | AirDesk runs once per PC session; the running window is brought to the front. |
 | "This database was created by a newer version of AirDesk" | Install the same or a newer AirDesk version. |
+| AirDesk asks for the **recovery passphrase** at start | Normal after reinstalling Windows, on another Windows account, or on a new PC: enter it once. If the key file is reported missing/damaged, choose **Read the key from a backup file**. |
+| "Wrong recovery passphrase" / wait message | Check caps and keyboard layout (the passphrase uses Latin letters). Backups need the passphrase valid when they were made. After repeated failures AirDesk waits up to 30 s between attempts. |
+| "The database file is damaged" at start | Restore the newest backup from that screen; the damaged file is kept as `airdesk.db.pre-restore-…`. |
 | "Migration N (name) does not match this build" | The database was written by an unofficial or modified build. Restore a backup made by an official build; contact support. |
 | Restore refused "an automatic backup is running" | Wait a minute and try again. |
 | User locked out | Wait 15 minutes or an Admin unlocks the user in Users & roles. |

@@ -69,6 +69,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw 'The signing gate accepted a release build without credentials' }
           if ("$msg" -notmatch 'no signing credentials') { throw "Unclear signing error: $msg" }
           Write-Host "Refused as expected: $msg"
+          exit 0
       - name: Upgrade path — build and install 1.0.0-rc.1, create unencrypted data
         shell: pwsh
         run: |

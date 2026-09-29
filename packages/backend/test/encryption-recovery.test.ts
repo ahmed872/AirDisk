@@ -648,3 +648,73 @@ describe('upgrading a 1.0.0-rc.1 (unencrypted) installation', () => {
     }
   });
 });
+
+describe('financial regression across encryption, backup and clean-PC restore', () => {
+  it('a mixed month of activity reports exactly the same amounts before encryption, after encryption and after recovery on a new PC', async () => {
+    const dir = tempDir();
+    const period = { from: '2026-08-01', to: '2026-12-31' };
+    const rc = await makeBackend({ dataDir: dir });
+    await setupCompany(rc);
+    let s = await login(rc);
+    const w = await world(rc, s);
+    const bank = await ok<{ id: string }>(rc, 'moneyAccounts.save', { name: 'Bank', accountType: 'BANK', currencyCode: 'EGP' }, s);
+    await ok(rc, 'treasury.transfer', { kind: 'OWNER_CAPITAL', toAccountId: w.cash.id, amountMinor: 2_000_000 }, s);
+    await ok(rc, 'openingBalances.record', { target: 'CUSTOMER', targetId: w.customer.id, side: 'OWED_TO_OFFICE', currency: 'EGP', amountMinor: 30_000, date: '2026-08-31' }, s);
+    const a = await book(rc, s, w);
+    await receive(rc, s, w, a.id, 1_050_000);
+    await paySupplier(rc, s, w, a.id, 600_000);
+    const b = await book(rc, s, w, { saleMinor: 500_000, costMinor: 450_000, discountMinor: 20_000 });
+    await receive(rc, s, w, b.id, 100_000);
+    const c = await book(rc, s, w, { saleMinor: 300_000, costMinor: 280_000 });
+    await receive(rc, s, w, c.id, 300_000);
+    let cx = await ok<{ id: string; rowVersion: number }>(rc, 'cancellations.request', { bookingId: c.id, cancelType: 'REFUND', reason: 'Trip cancelled' }, s);
+    cx = await ok(rc, 'cancellations.submit', { id: cx.id, rowVersion: cx.rowVersion }, s);
+    cx = await ok(rc, 'cancellations.confirmSupplier', { id: cx.id, rowVersion: cx.rowVersion, lines: [{ ticketId: c.tickets[0]!.id, returnMinor: 250_000, penaltyMinor: 10_000 }] }, s);
+    await ok(rc, 'cancellations.creditCustomer', { id: cx.id, rowVersion: cx.rowVersion, lines: [{ ticketId: c.tickets[0]!.id, returnMinor: 300_000 }], cancellationFeeMinor: 20_000 }, s);
+    await ok(rc, 'balances.apply', { party: 'CUSTOMER', partyId: w.customer.id, currency: 'EGP', fromBookingId: c.id, allocations: [{ bookingId: b.id, amountMinor: 200_000 }] }, s);
+    await ok(rc, 'payments.refundCustomer', { partyId: w.customer.id, currency: 'EGP', amountMinor: 80_000, moneyAccountId: w.cash.id, paymentMethod: 'CASH', allocations: [{ bookingId: c.id, amountMinor: 80_000 }] }, s);
+    const cat = (await ok<{ id: string }[]>(rc, 'expenseCategories.list', {}, s))[0]!;
+    await ok(rc, 'expenses.create', { categoryId: cat.id, currency: 'EGP', amountMinor: 70_000, moneyAccountId: w.cash.id, paymentMethod: 'CASH', description: 'Internet' }, s);
+    await ok(rc, 'treasury.transfer', { kind: 'ACCOUNT_TRANSFER', fromAccountId: w.cash.id, toAccountId: bank.id, amountMinor: 500_000 }, s);
+    await ok(rc, 'treasury.transfer', { kind: 'OWNER_DRAWING', fromAccountId: bank.id, amountMinor: 50_000 }, s);
+    const a2 = await ok<BookingDto>(rc, 'bookings.get', { id: a.id }, s);
+    await ok(rc, 'bookings.reissue', { bookingId: a.id, ticketId: a2.tickets[0]!.id, rowVersion: a2.rowVersion, changeFeeMinor: 50_000, supplierPenaltyMinor: 20_000, reason: 'Date change' }, s);
+
+    const capture = async (env: TestEnv | LEnv, sid: string) => {
+      const get = (cmd: string, p: unknown) => ok<unknown>(env as TestEnv, cmd, p, sid);
+      const out: Record<string, unknown> = {
+        summary: await get('ledger.summary', period),
+        trial: await get('ledger.trialBalance', { asOf: '2026-12-31' }),
+        agingC: await get('aging.get', { party: 'CUSTOMER', asOf: '2026-12-31' }),
+        agingS: await get('aging.get', { party: 'SUPPLIER', asOf: '2026-12-31' }),
+        stmtC: await get('statements.get', { party: 'CUSTOMER', partyId: w.customer.id, ...period }),
+        stmtS: await get('statements.get', { party: 'SUPPLIER', partyId: w.supplier.id, ...period }),
+        dashboard: await get('dashboard.metrics', period),
+        accounts: await get('moneyAccounts.list', {}),
+      };
+      for (const r of ['sales', 'purchases', 'profit', 'receivables', 'payables', 'supplier_volume', 'collections', 'expenses', 'refunds', 'cancellations', 'cash_book']) {
+        out[r] = await get('reports.run', { report: r, ...period });
+      }
+      return JSON.parse(JSON.stringify(out));
+    };
+    const plain = await capture(rc, s);
+    expect((plain.summary as { sales: number }).sales).toBeGreaterThan(0);
+    rc.backend.close();
+
+    // Encrypt in place.
+    let env = await launch(dir, new MemoryDeviceKeys());
+    s = await login(env);
+    expect((await env.call('security.enableEncryption', { password: ADMIN.password, passphrase: PASSPHRASE, confirmation: PASSPHRASE }, s)).ok).toBe(true);
+    s = await login(env);
+    expect(await capture(env, s)).toEqual(plain);
+    const bk = await ok<{ filePath: string }>(env as never, 'backup.create', {}, s);
+    closeAll();
+
+    // Recover on a clean PC.
+    env = await launch(tempDir(), new MemoryDeviceKeys());
+    expect((await env.call('vault.restoreBackup', { filePath: bk.filePath, passphrase: PASSPHRASE, confirmation: 'RESTORE' })).ok).toBe(true);
+    s = await login(env);
+    expect(await capture(env, s)).toEqual(plain);
+    closeAll();
+  });
+});
