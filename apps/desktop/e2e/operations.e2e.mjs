@@ -218,7 +218,7 @@ try {
     const supplier = (await must('suppliers.list', {})).items[0];
     b = await must('bookings.saveSegment', { bookingId: b.id, segment: { airlineId: airline.id, flightNumber: '917', origin: 'CAI', destination: 'JED', departureDate: '2026-11-01', departureTime: '09:00', arrivalDate: '2026-11-01', arrivalTime: '11:30' } });
     b = await must('bookings.savePriceItem', { bookingId: b.id, item: { passengerId: b.passengers[0].id, supplierId: supplier.id, fareMinor: 800000, costMinor: 750000, costCurrency: 'EGP' } });
-    b = await must('bookings.issue', { id: b.id, rowVersion: b.rowVersion });
+    await must('bookings.issue', { id: b.id, rowVersion: b.rowVersion });
     await win.click('[data-nav=tickets]');
     await win.click('[data-record] >> nth=0');
     await win.waitForSelector('[data-testid=page-record]');

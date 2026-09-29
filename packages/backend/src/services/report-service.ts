@@ -234,7 +234,7 @@ export class ReportService {
                                         (SELECT COALESCE(SUM(CASE WHEN jl.account_code = '5200' THEN jl.debit_base_minor - jl.credit_base_minor END), 0) FROM fin_document d
                                            JOIN journal_entry je ON je.document_id = d.id JOIN journal_line jl ON jl.entry_id = je.id WHERE d.cancellation_request_id = cr.id) AS penalties
                                  FROM cancellation_request cr JOIN booking b ON b.id = cr.booking_id JOIN customer c ON c.id = b.customer_id
-                                 WHERE substr(cr.requested_at, 1, 10) BETWEEN @from AND @to ${own} ORDER BY cr.requested_at`).all({ from, to, ...(own ? { me } : {}) }) as Record<string, number | string>[];
+                                 WHERE cr.requested_at >= @from AND cr.requested_at < date(@to, '+1 day') ${own} ORDER BY cr.requested_at`).all({ from, to, ...(own ? { me } : {}) }) as Record<string, number | string>[];
         const viewCost = hasAny(actor, 'booking.view_cost');
         const data: ReportDto['rows'] = rows.map((r) => ({ ...r, net_impact: viewCost ? Number(r.fees) - Number(r.sale_returned) + Number(r.cost_returned) - Number(r.penalties) : null, cost_returned: viewCost ? Number(r.cost_returned) : null, penalties: viewCost ? Number(r.penalties) : null }));
         return out([col('request_no', 'request', 'code'), col('requested', 'date', 'date'), col('booking_no', 'booking', 'code'), col('customer', 'customer'), col('cancel_type', 'type', 'code'),
@@ -304,7 +304,7 @@ export class ReportService {
         bookingsCreated: q(`SELECT COUNT(*) AS n FROM booking b WHERE b.booking_date BETWEEN @from AND @to ${scope}`),
         bookingsIssued: q(`SELECT COUNT(*) AS n FROM booking b WHERE b.issue_date BETWEEN @from AND @to ${scope}`),
         ticketsIssued: q(`SELECT COUNT(*) AS n FROM ticket t JOIN booking b ON b.id = t.booking_id WHERE t.issue_date BETWEEN @from AND @to ${scope}`),
-        cancellations: q(`SELECT COUNT(*) AS n FROM cancellation_request cr JOIN booking b ON b.id = cr.booking_id WHERE substr(cr.requested_at, 1, 10) BETWEEN @from AND @to ${scope}`),
+        cancellations: q(`SELECT COUNT(*) AS n FROM cancellation_request cr JOIN booking b ON b.id = cr.booking_id WHERE cr.requested_at >= @from AND cr.requested_at < date(@to, '+1 day') ${scope}`),
         upcomingDepartures: (db.prepare(`SELECT COUNT(*) AS n FROM flight_segment fs JOIN booking b ON b.id = fs.booking_id WHERE fs.status <> 'CANCELLED'
                                           AND b.status IN ('RESERVED','ISSUED','PARTIALLY_CANCELLED') AND fs.departure_date BETWEEN @today AND @soon ${scope}`)
           .get({ today: this.company.today(), soon: soon.toISOString().slice(0, 10), me: actor.userId }) as { n: number }).n,

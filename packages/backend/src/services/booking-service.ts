@@ -234,7 +234,14 @@ export class BookingService {
 
     const docs = readDocuments(db, `(d.booking_id = ? OR d.id IN (SELECT document_id FROM fin_document_line WHERE booking_id = ?))`, [id, id])
       .filter((d) => viewCost || !SUPPLIER_DOC_TYPES.includes(d.docType));
-    const fin = db.prepare('SELECT * FROM v_booking_financials WHERE booking_id = ?').get(id) as { net_sales_base_minor: number; net_cost_base_minor: number; gross_profit_base_minor: number };
+    // Same figures as v_booking_financials, read through ix_jl_booking: the view groups every
+    // booking before filtering, which scans the whole journal (measured in the performance test).
+    const fin = db
+      .prepare(`SELECT COALESCE(SUM(CASE WHEN la.account_class IN ('REVENUE','CONTRA_REVENUE') THEN jl.credit_base_minor - jl.debit_base_minor END), 0) AS net_sales_base_minor,
+                  COALESCE(SUM(CASE WHEN la.account_class IN ('COST','CONTRA_COST') THEN jl.debit_base_minor - jl.credit_base_minor END), 0) AS net_cost_base_minor,
+                  COALESCE(SUM(CASE WHEN la.account_class IN ('REVENUE','CONTRA_REVENUE','COST','CONTRA_COST') THEN jl.credit_base_minor - jl.debit_base_minor END), 0) AS gross_profit_base_minor
+                FROM journal_line jl JOIN ledger_account la ON la.code = jl.account_code WHERE jl.booking_id = ?`)
+      .get(id) as { net_sales_base_minor: number; net_cost_base_minor: number; gross_profit_base_minor: number };
 
     return {
       id: r.id, bookingNo: r.booking_no, status: r.status, pnr: r.primary_pnr, bookingDate: r.booking_date, issueDate: r.issue_date,
