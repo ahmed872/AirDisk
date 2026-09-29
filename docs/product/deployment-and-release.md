@@ -102,3 +102,14 @@ When the external items in [release-gate-1.0.0.md](release-gate-1.0.0.md) §5 ar
 7. **Publish:** open the draft release, check the installer name, `SHA256SUMS.txt` and the signature (Properties → Digital Signatures on a Windows PC), then **Publish**.
 
 The same procedure with `1.0.0-rc.3` produces a signed pre-release instead, for pilots.
+
+## 10. Unsigned pre-releases (owner decision, pilots only)
+
+Adding `release-requests/v<version>.json` (with `"signed": false`, `"channel": "pre-release"`) runs `.github/workflows/prerelease-unsigned.yml`:
+1. full CI gates (Linux + Windows);
+2. unsigned build, still named `…-UNSIGNED-x64.exe`;
+3. silent install + packaged smoke test;
+4. `SHA256SUMS.txt`;
+5. a GitHub **pre-release** `v<version>` whose notes warn about SmartScreen.
+
+It refuses to publish a version without a pre-release suffix (e.g. `1.0.0`), because a final version must be signed through `release.yml`. `v1.0.0-rc.2` was requested this way by the owner for pilot use.

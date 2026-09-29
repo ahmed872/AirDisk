@@ -1,0 +1,89 @@
+name: Pre-release (UNSIGNED installer, owner-approved)
+
+# Publishes a GitHub PRE-release with the UNSIGNED installer when the owner
+# adds release-requests/v<version>.json. It never produces an official
+# (signed) release: the installer keeps its -UNSIGNED- file name, the release
+# is marked pre-release and its notes say that Windows will warn about an
+# unknown publisher. Signed releases come only from release.yml.
+on:
+  push:
+    branches: ['**']
+    paths: ['release-requests/*.json']
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Build, smoke-test and publish the UNSIGNED pre-release
+    needs: gates
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Request must match the application version
+        id: v
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          $req = Get-Content "release-requests/v$version.json" -ErrorAction Stop | ConvertFrom-Json
+          if ($req.version -ne $version) { throw "Request is for $($req.version), app is $version" }
+          if ($req.signed -ne $false -or $req.channel -ne 'pre-release') { throw 'This workflow only publishes UNSIGNED pre-releases' }
+          if ($version -notmatch '-') { throw "Refusing to publish an unsigned build as a final version ($version). Use release.yml with a certificate." }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Build the installer (unsigned)
+        run: pnpm dist:win
+      - name: Silent install + packaged smoke test
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-UNSIGNED-x64.exe | Select-Object -First 1
+          if (-not $installer) { throw 'UNSIGNED installer not found' }
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', '/allusers' -Wait
+          $out = "$env:RUNNER_TEMP\smoke.json"
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out" -Wait
+          Get-Content $out
+          if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Smoke test failed' }
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-UNSIGNED-x64.exe | Select-Object -First 1
+          "$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower())  $($f.Name)" | Set-Content apps/desktop/dist/SHA256SUMS.txt
+          Get-Content apps/desktop/dist/SHA256SUMS.txt
+      - name: Publish GitHub pre-release (creates the tag on this commit)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = '${{ steps.v.outputs.version }}'
+          $tag = "v$v"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists" }
+          $installer = (Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-UNSIGNED-x64.exe | Select-Object -First 1).FullName
+          $notes = @"
+          AirDesk $v — release candidate (pre-release) for pilot offices.
+
+          ⚠ UNSIGNED installer: Windows SmartScreen will show "Windows protected your PC / Unknown publisher".
+          Click "More info" → "Run anyway" only if the file's SHA-256 matches SHA256SUMS.txt.
+          A signed 1.0.0 follows after the code-signing certificate, the physical Windows 10/11 checklist and the
+          disaster-recovery drill (docs/product/release-gate-1.0.0.md).
+
+          What is in this build: encryption at rest with a recovery passphrase, encrypted backups, restore onto a new PC,
+          background backup verification. AirDesk records existing tickets; it does not book flights, reserve seats,
+          create PNRs or issue tickets. No VAT calculation or e-invoicing (docs/product/vat-e-invoicing.md).
+
+          Upgrading from 1.0.0-rc.1: install over it; then Backup & restore → Data encryption → Enable encryption.
+          "@
+          $notes = ($notes -split "`n" | ForEach-Object { $_.TrimStart() }) -join "`n"
+          gh release create $tag $installer apps/desktop/dist/SHA256SUMS.txt --target $env:GITHUB_SHA --prerelease --title "AirDesk $v (UNSIGNED pre-release)" --notes $notes
+          gh release view $tag

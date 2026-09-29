@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0-rc.2",
+  "channel": "pre-release",
+  "signed": false,
+  "reason": "Owner decision: publish the release candidate now without a code-signing certificate (pilot use). Signed 1.0.0 follows docs/product/deployment-and-release.md §9."
+}
