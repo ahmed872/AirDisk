@@ -32,6 +32,8 @@ jobs:
         run: xvfb-run -a node apps/desktop/e2e/foundation.e2e.mjs
       - name: UI end-to-end — Phase 2 20-step scenario incl. restart (Playwright + Electron)
         run: xvfb-run -a node apps/desktop/e2e/phase2.e2e.mjs
+      - name: UI end-to-end — ticket-office operations workflow at 1366x768 (Playwright + Electron)
+        run: xvfb-run -a node apps/desktop/e2e/operations.e2e.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -39,6 +41,7 @@ jobs:
           path: |
             apps/desktop/out/e2e-screenshots
             apps/desktop/out/e2e-phase2
+            apps/desktop/out/e2e-operations
           retention-days: 7
 
   windows:
