@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { CustomerDto, ReportDto, StatementDto } from '@airdesk/contracts';
 import { call } from '../api';
+import { csvDocument, csvMoney, csvText } from '../csv';
 import { Alert, EmptyState, PageHeader } from '../components';
 import { isTKey, useI18n, type TKey } from '../i18n';
 import { CustomerPicker, SupplierSelect, useSuppliers } from '../lookups';
@@ -68,10 +69,10 @@ function Reports({ can }: { can: Can }) {
   };
   const csv = () => {
     if (!data) return '';
-    const esc = (s: unknown) => `"${String(s ?? '').replace(/"/g, '""')}"`;
-    const head = data.columns.map((c) => esc(label(c.label))).join(',');
-    const body = data.rows.map((r) => data.columns.map((c) => esc(c.type === 'money' && r[c.key] !== null ? (Number(r[c.key]) / 10 ** m.unit(typeof r.currency === 'string' && (c.key === 'amount' || data.notes.includes('amountsInTransactionCurrency')) ? r.currency : m.base)).toFixed(2) : r[c.key])).join(','));
-    return [head, ...body].join('\r\n');
+    const currencyOf = (key: string, r: Record<string, unknown>) =>
+      typeof r.currency === 'string' && (key === 'amount' || data.notes.includes('amountsInTransactionCurrency')) ? r.currency : m.base;
+    return csvDocument(data.columns.map((c) => label(c.label)), data.rows.map((r) => data.columns.map((c) =>
+      c.type === 'money' && r[c.key] !== null && r[c.key] !== undefined ? csvMoney(Number(r[c.key]), m.unit(currencyOf(c.key, r))) : csvText(r[c.key]))));
   };
   const table = data && (
     <>
