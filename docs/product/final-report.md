@@ -1,5 +1,7 @@
 # AirDesk 1.0.0-rc.1 — Product Completion Report
 
+> Superseded for release decisions by the final pre-release audit: [release-audit.md](release-audit.md) (fixes after this report, remaining blockers, release recommendation).
+
 Branch `claude/loving-rubin-kyf18y`. This phase: 11 commits from `3f68146` to `5a9fd18`, 82 files changed (+10,913 / −124). CI evidence: runs 11–18 (Linux + Windows).
 
 ## A. Executive summary
