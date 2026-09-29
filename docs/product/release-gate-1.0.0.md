@@ -36,8 +36,8 @@
 | Performance (`AIRDESK_PERF=1`, 140 MB) | Every interactive operation < 0.6 s. Encrypted backup 10.3–10.5 s with 8–134 ms main-thread lag; integrity 4.4–4.6 s with 3–6 ms (two runs) ([performance.md](performance.md)). |
 | Electron smoke (real runtime, Linux) | full / seed / verify / recover / **upgrade from the real rc.1 build**: all pass; jobs ran on the worker; no customer or ticket text readable in the data folder |
 | E2E (Playwright + Electron, Linux) | foundation ✔; Phase 2 20/20 ✔ (restart → unlock screen, wrong then right passphrase); operations 14/14 ✔ |
-| Linux CI | ✔ run 29 (`197fc1b`): typecheck, lint, tests + coverage, build, Electron smoke, 3 E2E suites |
-| Windows CI (`windows-latest`) | ✔ run 29 (`197fc1b`): all 15 steps below |
+| Linux CI | ✔ runs 29 (`197fc1b`) and 31 (`c0879bd`): typecheck, lint, tests + coverage, build, Electron smoke, 3 E2E suites |
+| Windows CI (`windows-latest`) | ✔ runs 29 and 31: all 15 steps below (run 31 with the UNSIGNED-named development installer) |
 
 Encryption and recovery cases covered by `encryption-recovery.test.ts`:
 - setup refusals, then an encrypted database;
@@ -118,7 +118,9 @@ The Windows CI job covers:
 - `811554a` worker regression test, signing pipeline, release workflow, Windows CI
 - `af22e02` audit tamper tests, financial regression, recovery docs, rc.2
 - `5398b1e` + `197fc1b` worker test stabilised (event-loop utilisation), agent tests, docs
-- CI run 29 on `197fc1b`: Linux ✔, Windows ✔ ([run](https://github.com/ahmed872/AirDisk/actions/runs/36552574340)). The docs-only commit that adds this report runs the same workflow.
+- CI run 29 on `197fc1b`: Linux ✔, Windows ✔ ([run](https://github.com/ahmed872/AirDisk/actions/runs/36552574340)).
+- `c0879bd` release readiness (workflow hardening, UNSIGNED dev naming, version script, manual test/DR packages): CI run 31 Linux ✔, Windows ✔ ([run](https://github.com/ahmed872/AirDisk/actions/runs/36556816667)).
+- Final pass, run locally at `c0879bd`: typecheck ✔, lint ✔, **287 passed / 1 skipped** (coverage lines 93.48 %, statements 89.06 %, branches 80.47 %), Electron smoke 28/28 ✔, E2E foundation ✔ / Phase 2 20/20 ✔ / operations ✔, performance ✔ (worst interactive median 422 ms).
 
 ## 7. Recommendation and procedure to 1.0.0
 
