@@ -20,6 +20,7 @@ const dataDir = mkdtempSync(join(tmpdir(), 'airdesk-e2e2-'));
 const ADMIN_PW = 'correct horse battery staple';
 const AGENT_TEMP = 'temporary pass 12345';
 const AGENT_PW = 'agent real secret 987';
+let RECOVERY = '';
 
 let app;
 let win;
@@ -97,8 +98,14 @@ try {
     await win.fill('[data-testid=setup-displayName]', 'المالك');
     await win.fill('[data-testid=setup-password]', ADMIN_PW);
     await win.fill('[data-testid=setup-confirm]', ADMIN_PW);
+    // Every new installation is encrypted: the owner sets the recovery passphrase (typed twice, acknowledged).
+    await win.click('[data-testid=recovery-generate]');
+    RECOVERY = (await win.textContent('[data-testid=recovery-suggested]')).trim();
+    await win.fill('[data-testid=recovery-confirm]', RECOVERY.toLowerCase());
+    await win.check('[data-testid=recovery-ack]');
     await win.click('[data-testid=setup-submit]');
     await win.waitForSelector('[data-testid=setup-done]');
+    assert.equal((await invoke('system.status')).data.encrypted, true, 'new installations are encrypted');
     assert.equal((await invoke('system.status')).data.setupRequired, false);
     const again = await invoke('system.setup', {
       company: { legalNameAr: 'x', baseCurrencyCode: 'EGP', defaultCountryCode: 'EG', timezone: 'Africa/Cairo', defaultLocale: 'ar' },
@@ -303,6 +310,16 @@ try {
   await step(20, 'data persists after restart', async () => {
     await app.close();
     await launch();
+    // Linux CI has no OS keyring: the encrypted data asks for the recovery passphrase (Windows opens it through DPAPI).
+    await win.waitForSelector('[data-testid=unlock-page], [data-testid=login-username]');
+    if (await win.isVisible('[data-testid=unlock-page]')) {
+      await win.fill('[data-testid=unlock-passphrase]', 'wrong recovery passphrase');
+      await win.click('[data-testid=unlock-submit]');
+      await win.waitForSelector('[data-testid=unlock-page] .alert.error');
+      await win.waitForTimeout(2100);
+      await win.fill('[data-testid=unlock-passphrase]', RECOVERY);
+      await win.click('[data-testid=unlock-submit]');
+    }
     await win.waitForSelector('[data-testid=login-username]');
     assert.equal((await invoke('system.status')).data.setupRequired, false);
     await login('owner', ADMIN_PW);

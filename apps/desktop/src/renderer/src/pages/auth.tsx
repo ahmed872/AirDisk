@@ -70,8 +70,12 @@ export function ChangePasswordPage({ onDone }: { onDone: () => void }) {
 }
 
 
-export function SetupPage({ onDone }: { onDone: () => void }) {
+import { EMPTY_RECOVERY, RecoveryFields, RestoreOntoPc, type RecoveryValue } from './vault';
+
+export function SetupPage({ onDone, encryptedAlready }: { onDone: () => void; encryptedAlready?: boolean }) {
   const { t, errorMessage, setLocale, locale } = useI18n();
+  const [recovery, setRecovery] = useState<RecoveryValue>(EMPTY_RECOVERY);
+  const [restoreMode, setRestoreMode] = useState(false);
   const [f, setF] = useState({
     legalNameAr: '', legalNameEn: '', baseCurrencyCode: 'EGP', defaultCountryCode: 'EG', timezone: 'Africa/Cairo', defaultLocale: 'ar' as 'ar' | 'en',
     username: '', displayName: '', password: '', confirm: '',
@@ -84,6 +88,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (f.password !== f.confirm) return setError(t('passwordsDoNotMatch'));
+    if (!encryptedAlready && !recovery.acknowledged) return setError(t('recoveryAck'));
     setBusy(true);
     setError(null);
     try {
@@ -93,6 +98,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
           defaultCountryCode: f.defaultCountryCode.toUpperCase(), timezone: f.timezone, defaultLocale: f.defaultLocale,
         },
         admin: { username: f.username, displayName: f.displayName, password: f.password, locale: f.defaultLocale },
+        ...(encryptedAlready ? {} : { recovery: { passphrase: recovery.passphrase, confirmation: recovery.confirmation } }),
       });
       setLocale(f.defaultLocale);
       onDone();
@@ -102,11 +108,13 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
       setBusy(false);
     }
   };
+  if (restoreMode) return <RestoreOntoPc onDone={onDone} onBack={() => setRestoreMode(false)} />;
   return (
     <div className="center">
       <form className="card" onSubmit={submit}>
         <h1>{t('setupTitle')}</h1>
         <p className="muted">{t('setupIntro')}</p>
+        {!encryptedAlready && <p className="hint">{t('newCompanyOrRestore')} <button type="button" className="link" onClick={() => setRestoreMode(true)} data-testid="setup-restore-instead">{t('restoreInstead')}</button></p>}
         {error && <div className="alert error" role="alert">{error}</div>}
         <h2>{t('setupStep1')}</h2>
         <div className="grid">
@@ -131,7 +139,9 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
           <label>{t('password')}<input className="ltr" data-testid="setup-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} required /></label>
           <label>{t('confirmPassword')}<input className="ltr" data-testid="setup-confirm" type="password" autoComplete="new-password" value={f.confirm} onChange={set('confirm')} required /></label>
         </div>
+        {!encryptedAlready && (<><h2>{t('recoveryTitle')}</h2><RecoveryFields value={recovery} onChange={setRecovery} /></>)}
         <div className="actions"><button className="primary" disabled={busy} data-testid="setup-submit">{t('finishSetup')}</button></div>
+        {busy && <div className="alert info" role="status">{t('workingPleaseWait')}</div>}
       </form>
     </div>
   );

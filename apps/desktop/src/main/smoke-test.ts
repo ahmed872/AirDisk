@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AppBackend, createMemoryLogger, runIntegrityChecks } from '@airdesk/backend';
+import { AppLauncher, databaseFileKind, createMemoryLogger, runIntegrityChecks, type AppBackend, type DeviceKeyStore } from '@airdesk/backend';
 
 /**
  * `AirDesk.exe --smoke-test=<result.json> [--smoke-phase=full|seed|verify] [--smoke-data-dir=<dir>]`
@@ -18,37 +18,71 @@ import { AppBackend, createMemoryLogger, runIntegrityChecks } from '@airdesk/bac
  * `seed` only does what the public first-run setup screen allows anyway, and
  * refuses to touch a directory that is already set up.
  */
-export type SmokePhase = 'full' | 'seed' | 'verify';
+export type SmokePhase = 'full' | 'seed' | 'verify' | 'recover';
 const USER = 'operator';
 const PASSWORD = 'smoke test password 123';
+/** Test-only recovery passphrase for the smoke data (never used for real data). */
+export const SMOKE_RECOVERY = 'SMOKE-TEST-RECOVERY-PASSPHRASE-2026';
 
 type Step = { step: string; ok: boolean; detail?: string };
 const dataOf = (r: { ok: boolean }): unknown => (r.ok ? (r as { data?: unknown }).data : undefined);
 
-export async function runSmokeTest(resultPath: string, appVersion: string, opts: { phase?: SmokePhase; dataDir?: string } = {}): Promise<number> {
+export async function runSmokeTest(
+  resultPath: string,
+  appVersion: string,
+  opts: { phase?: SmokePhase; dataDir?: string; deviceKeys: DeviceKeyStore; workerPath: string; backupFile?: string; backupOut?: string },
+): Promise<number> {
   const phase = opts.phase ?? 'full';
   const steps: Step[] = [];
   const temp = !opts.dataDir;
   const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'airdesk-smoke-'));
-  let backend: AppBackend | null = null;
+  let launcher: AppLauncher | null = null;
   const record = (step: string, ok: boolean, detail?: string) => steps.push(detail ? { step, ok, detail } : { step, ok });
-  const open = async () => {
-    backend = await AppBackend.open({ dataDir, appVersion, logger: createMemoryLogger() });
-    return backend;
+  const launch = async () => {
+    launcher?.close();
+    launcher = await AppLauncher.start({ dataDir, appVersion, logger: createMemoryLogger(), deviceKeys: opts.deviceKeys, workerPath: opts.workerPath });
+    return launcher;
   };
   try {
     if (phase !== 'full' && temp) throw new Error(`--smoke-phase=${phase} requires --smoke-data-dir`);
-    let b = await open();
+    let l = await launch();
+    const lcall = (command: string, payload: unknown, sessionId: string | null = null) => l.dispatch({ command, payload, sessionId, workstation: 'SMOKE' });
+    record('device key protection', opts.deviceKeys.isAvailable() || process.platform !== 'win32', `${opts.deviceKeys.kind}: ${opts.deviceKeys.isAvailable() ? 'available' : 'not available'}`);
+
+    if (phase === 'recover') {
+      // Clean-PC disaster recovery: an empty data folder + an off-site backup + its recovery passphrase.
+      record('clean data folder starts as NEW', l.launchState === 'NEW', l.launchState);
+      const r = await lcall('vault.restoreBackup', { filePath: opts.backupFile, passphrase: SMOKE_RECOVERY, confirmation: 'RESTORE' });
+      record('restore encrypted backup onto this PC', r.ok, r.ok ? undefined : JSON.stringify(r.error));
+    } else if (phase === 'full' || (phase === 'seed')) {
+      const needNew = l.launchState === 'NEW';
+      if (!needNew) throw new Error('Refusing to run setup: this data directory already holds company data');
+    } else if (l.launchState === 'LOCKED') {
+      // verify on a machine without OS key protection: the passphrase opens it.
+      const u = await lcall('vault.unlock', { passphrase: SMOKE_RECOVERY });
+      record('unlock with recovery passphrase', u.ok, u.ok ? undefined : JSON.stringify(u.error));
+    }
+    if (phase === 'full' || phase === 'seed') {
+      const setup = await lcall('system.setup', {
+        company: { legalNameAr: 'اختبار', baseCurrencyCode: 'EGP', defaultCountryCode: 'EG', timezone: 'Africa/Cairo', defaultLocale: 'ar' },
+        admin: { username: USER, displayName: 'Smoke', password: PASSWORD, locale: 'ar' },
+        recovery: { passphrase: SMOKE_RECOVERY, confirmation: SMOKE_RECOVERY },
+      });
+      record('first-run setup: encrypted database + recovery passphrase', setup.ok, setup.ok ? undefined : JSON.stringify(setup.error));
+    }
+    if (!l.backend) throw new Error(`company data not open (${l.launchState} ${l.lockReason ?? ''})`);
+    let b: AppBackend = l.backend;
     const db = () => b.internals.db;
     record('open+migrate', true, `schema v${b.schemaVersionNow}, sqlite ${(db().prepare('select sqlite_version() v').get() as { v: string }).v}, dir ${dataDir}`);
-    const call = (command: string, payload: unknown, sessionId: string | null = null) => b.dispatch({ command, payload, sessionId, workstation: 'SMOKE' });
+    record('database encrypted at rest', databaseFileKind(join(dataDir, 'airdesk.db')) === 'ENCRYPTED' && b.isEncrypted);
+    const call = (command: string, payload: unknown, sessionId: string | null = null) => lcall(command, payload, sessionId);
     const login = async (username = USER, password = PASSWORD) => {
       const r = await call('auth.login', { username, password });
       return r.session && 'set' in r.session ? r.session.set : null;
     };
     const status = async () => dataOf(await call('system.status', {})) as { setupRequired: boolean };
 
-    if (phase === 'verify') {
+    if (phase === 'verify' || phase === 'recover') {
       record('setup not offered again', !(await status()).setupRequired);
       const s = await login();
       record('login', !!s);
@@ -61,13 +95,11 @@ export async function runSmokeTest(resultPath: string, appVersion: string, opts:
       record('ticket record + balances persisted', await recordPersisted(call, s));
       const about = dataOf(await call('system.about', {}, s)) as { schemaVersion: number; latestSchemaVersion: number } | undefined;
       record('schema up to date', !!about && about.schemaVersion === about.latestSchemaVersion, about ? `schema v${about.schemaVersion}` : undefined);
+      const report = dataOf(await call('reports.run', { report: 'sales', from: '2000-01-01', to: '2100-12-31' }, s)) as { rows: unknown[] } | undefined;
+      record('reports run', (report?.rows.length ?? 0) >= 1);
+      const next = await call('backup.create', {}, s);
+      record('future backups work (encrypted, verified on the worker thread)', next.ok && b.jobs.stats.inWorker > 0, next.ok ? JSON.stringify(b.jobs.stats) : JSON.stringify(next.error));
     } else {
-      if (!(await status()).setupRequired) throw new Error('Refusing to run setup: this data directory is already set up');
-      const setup = await call('system.setup', {
-        company: { legalNameAr: 'اختبار', baseCurrencyCode: 'EGP', defaultCountryCode: 'EG', timezone: 'Africa/Cairo', defaultLocale: 'ar' },
-        admin: { username: USER, displayName: 'Smoke', password: PASSWORD, locale: 'ar' },
-      });
-      record('first-run setup (argon2 hash)', setup.ok, setup.ok ? undefined : JSON.stringify(setup.error));
       const again = await call('system.setup', {
         company: { legalNameAr: 'x', baseCurrencyCode: 'EGP', defaultCountryCode: 'EG', timezone: 'Africa/Cairo', defaultLocale: 'ar' },
         admin: { username: 'intruder', displayName: 'x', password: 'another long password', locale: 'ar' },
@@ -120,9 +152,19 @@ export async function runSmokeTest(resultPath: string, appVersion: string, opts:
       const denied = await call('roles.create', { code: 'HACK', nameAr: 'x', nameEn: 'x', permissions: [] }, agentSession);
       record('agent refused role management', !denied.ok && denied.error.code === 'FORBIDDEN');
 
+      const verified = await call('integrity.run', {}, sessionId);
+      record('integrity check on the worker thread', verified.ok && b.jobs.stats.inWorker > 0, JSON.stringify(b.jobs.stats));
+      if (opts.backupOut) {
+        const off = await call('backup.create', { destinationDir: opts.backupOut }, sessionId);
+        record('encrypted off-site backup written', off.ok, off.ok ? (off.data as { filePath: string }).filePath : JSON.stringify(off.error));
+      }
       if (phase === 'full') {
-        b.close();
-        b = await open();
+        l = await launch();
+        if (l.launchState === 'LOCKED') {
+          const u = await lcall('vault.unlock', { passphrase: SMOKE_RECOVERY });
+          record('restart: unlock with passphrase (no OS key protection here)', u.ok);
+        } else record('restart: opened with the OS-protected key (no passphrase)', l.launchState === 'READY');
+        b = l.backend!;
         const s2 = await login();
         const kept = dataOf(await call('customers.list', { query: 'Smoke Customer' }, s2)) as { total: number } | undefined;
         record('data persists after restart', !!s2 && (kept?.total ?? 0) === 1);
@@ -134,7 +176,7 @@ export async function runSmokeTest(resultPath: string, appVersion: string, opts:
   } catch (e) {
     record('exception', false, (e as Error).stack ?? String(e));
   } finally {
-    (backend as AppBackend | null)?.close();
+    (launcher as AppLauncher | null)?.close();
     if (temp) rmSync(dataDir, { recursive: true, force: true });
   }
   const ok = steps.length > 0 && steps.every((s) => s.ok);

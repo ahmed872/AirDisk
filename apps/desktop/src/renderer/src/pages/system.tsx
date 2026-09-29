@@ -3,6 +3,7 @@ import type { BackupRecordDto, IntegrityReportDto } from '@airdesk/contracts';
 import { call } from '../api';
 import { isTKey, useI18n, type TKey } from '../i18n';
 import { useFmt } from '../prefs';
+import { EncryptionCard } from './vault';
 
 interface Schedule { intervalHours: number; keep: number; lastSuccessfulAt: string | null; nextDueAt: string | null; directory: string }
 
@@ -15,7 +16,8 @@ export function SystemPage({ canBackup, canRestore, canCheck, canSettings, onRes
   const [report, setReport] = useState<IntegrityReportDto | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [restore, setRestore] = useState({ filePath: '', password: '', confirmation: '' });
+  const [restore, setRestore] = useState({ filePath: '', password: '', confirmation: '', backupPassphrase: '' });
+  const [needsBackupPassphrase, setNeedsBackupPassphrase] = useState(false);
 
   const load = async () => {
     if (canBackup || canRestore) setBackups(await call<BackupRecordDto[]>('backup.list'));
@@ -96,6 +98,7 @@ export function SystemPage({ canBackup, canRestore, canCheck, canSettings, onRes
           ))}
         </tbody>
       </table>
+      {(canBackup || canRestore || canSettings) && <EncryptionCard canManage={canSettings} onSignedOut={onRestored} />}
       {canRestore && (
         <>
           <h2>{t('restore')}</h2>
@@ -109,10 +112,20 @@ export function SystemPage({ canBackup, canRestore, canCheck, canSettings, onRes
             </label>
             <label>{t('password')}<input className="ltr" type="password" value={restore.password} onChange={(e) => setRestore({ ...restore, password: e.target.value })} /></label>
             <label>RESTORE<input className="ltr" value={restore.confirmation} onChange={(e) => setRestore({ ...restore, confirmation: e.target.value })} /></label>
+            {needsBackupPassphrase && <label>{t('backupPassphraseLabel')}<input className="ltr" type="password" autoComplete="off" value={restore.backupPassphrase} onChange={(e) => setRestore({ ...restore, backupPassphrase: e.target.value })} data-testid="restore-backup-passphrase" /></label>}
           </div>
           <div className="actions">
             <button className="danger" disabled={busy || restore.confirmation !== 'RESTORE' || !restore.filePath || !restore.password}
-              onClick={() => run(async () => { await call('backup.restore', restore); onRestored(); })}>{t('restore')}</button>
+              onClick={() => run(async () => {
+                try {
+                  await call('backup.restore', { filePath: restore.filePath, password: restore.password, confirmation: restore.confirmation, backupPassphrase: restore.backupPassphrase || null });
+                } catch (e) {
+                  // An encrypted backup from another installation (or an older passphrase): ask for its passphrase.
+                  if ((e as { code?: string }).code === 'PASSPHRASE_REQUIRED') setNeedsBackupPassphrase(true);
+                  throw e;
+                }
+                onRestored();
+              })}>{t('restore')}</button>
           </div>
         </>
       )}

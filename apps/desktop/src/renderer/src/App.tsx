@@ -7,6 +7,7 @@ import { MoneyProvider } from './money';
 import { Modal } from './components';
 import { AuditPage } from './pages/audit';
 import { ChangePasswordPage, LoginPage, SetupPage } from './pages/auth';
+import { UnlockPage } from './pages/vault';
 import { CompanySettingsPage } from './pages/company';
 import { DashboardPage } from './pages/dashboard';
 import { AirportsPage } from './pages/airports';
@@ -67,7 +68,8 @@ function Root({ status, reload }: { status: SystemStatusDto; reload: () => void 
   };
 
   let content;
-  if (status.setupRequired) content = <SetupPage onDone={() => { setJustSetUp(true); reload(); }} />;
+  if (status.vault === 'LOCKED') content = <UnlockPage status={status} onOpened={reload} />;
+  else if (status.setupRequired) content = <SetupPage encryptedAlready={status.encrypted === true} onDone={() => { setJustSetUp(true); reload(); }} />;
   else if (!user) content = <LoginPage companyName={status.companyName} notice={notice} info={justSetUp ? 'setupDone' : null} onSignedIn={signedIn} />;
   else if (user.mustChangePassword) content = <ChangePasswordPage onDone={() => call<SessionUserDto>('auth.me').then(signedIn)} />;
   else content = <MoneyProvider base={prefs.baseCurrencyCode}><Shell user={user} onPrefs={(p) => setPrefs(pickPrefs(p))} onSignedOut={() => setUser(null)} onRestored={() => { setUser(null); reload(); }} /></MoneyProvider>;

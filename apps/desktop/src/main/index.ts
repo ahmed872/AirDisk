@@ -1,14 +1,17 @@
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, app, dialog, ipcMain, session, shell } from 'electron';
-import { AppBackend, type Logger } from '@airdesk/backend';
+import { AppLauncher, type AppBackend, type Logger } from '@airdesk/backend';
+import { createDeviceKeyStore } from './device-keys';
 import { createFileLogger } from './file-logger';
 import { resolveDataDir } from './paths';
 import { writeFileSync } from 'node:fs';
 import { CONTENT_SECURITY_POLICY, EXPORT_CHANNEL, IPC_CHANNEL, PICK_BACKUP_CHANNEL, MAX_EXPORT_TEXT, isAllowedExternalUrl, sanitizeExportName, secureWebPreferences } from './security';
 import { runSmokeTest, type SmokePhase } from './smoke-test';
 
-let backend: AppBackend | null = null;
+let launcher: AppLauncher | null = null;
+/** The open company backend (null while NEW/LOCKED). */
+const current = (): AppBackend | null => launcher?.backend ?? null;
 let logger: Logger | null = null;
 /** Session binding lives in the main process: the renderer never holds a token it could leak or forge. */
 const sessionByWebContents = new Map<number, string>();
@@ -50,6 +53,7 @@ function createWindow(): BrowserWindow {
   win.webContents.on('destroyed', () => {
     const sid = sessionByWebContents.get(id);
     sessionByWebContents.delete(id);
+    const backend = current();
     if (sid && backend) backend.svc.sessions.end(sid, 'APP_EXIT');
   });
   const dev = rendererUrl();
@@ -60,11 +64,11 @@ function createWindow(): BrowserWindow {
 
 function registerIpc(): void {
   ipcMain.handle(IPC_CHANNEL, async (event, command: unknown, payload: unknown) => {
-    if (!backend || typeof command !== 'string' || !isTrustedSender(event.senderFrame?.url ?? '')) {
+    if (!launcher || typeof command !== 'string' || !isTrustedSender(event.senderFrame?.url ?? '')) {
       return { ok: false, error: { code: 'FORBIDDEN', message: 'Rejected' } };
     }
     const wcId = event.sender.id;
-    const res = await backend.dispatch({ command, payload, sessionId: sessionByWebContents.get(wcId) ?? null, workstation: hostname() });
+    const res = await launcher.dispatch({ command, payload, sessionId: sessionByWebContents.get(wcId) ?? null, workstation: hostname() });
     if (res.session) {
       if ('set' in res.session) sessionByWebContents.set(wcId, res.session.set);
       else sessionByWebContents.delete(wcId);
@@ -82,6 +86,7 @@ function registerIpc(): void {
  */
 function registerExportIpc(): void {
   ipcMain.handle(EXPORT_CHANNEL, async (event, kind: unknown, name: unknown, content: unknown) => {
+    const backend = current();
     if (!backend || !isTrustedSender(event.senderFrame?.url ?? '')) return { ok: false, code: 'FORBIDDEN' };
     const sid = sessionByWebContents.get(event.sender.id);
     let actor;
@@ -112,17 +117,19 @@ function registerExportIpc(): void {
 
 function registerPickBackupIpc(): void {
   ipcMain.handle(PICK_BACKUP_CHANNEL, async (event) => {
-    if (!backend || !isTrustedSender(event.senderFrame?.url ?? '')) return null;
+    if (!launcher || !isTrustedSender(event.senderFrame?.url ?? '')) return null;
+    const backend = current();
     const sid = sessionByWebContents.get(event.sender.id);
-    let allowed = false;
+    // Before the data is open (new PC, locked, damaged) choosing a backup is how recovery starts.
+    let allowed = !backend;
     try {
-      allowed = !!sid && backend.svc.sessions.resolve(sid).permissions.has('backup.restore');
+      allowed ||= !!sid && !!backend && backend.svc.sessions.resolve(sid).permissions.has('backup.restore');
     } catch {
       allowed = false;
     }
     if (!allowed) return null;
     const win = BrowserWindow.fromWebContents(event.sender);
-    const choice = await dialog.showOpenDialog(win!, { properties: ['openFile'], filters: [{ name: 'AirDesk backup', extensions: ['adbk'] }], defaultPath: backend.backupDir });
+    const choice = await dialog.showOpenDialog(win!, { properties: ['openFile'], filters: [{ name: 'AirDesk backup', extensions: ['adbk'] }], ...(backend ? { defaultPath: backend.backupDir } : {}) });
     return choice.canceled ? null : choice.filePaths[0] ?? null;
   });
 }
@@ -134,7 +141,7 @@ function registerPickBackupIpc(): void {
  */
 function scheduleAutomaticBackups(): void {
   const run = (idleMinutes?: number) => {
-    backend?.runScheduledBackup(idleMinutes === undefined ? {} : { idleMinutes }).then(
+    current()?.runScheduledBackup(idleMinutes === undefined ? {} : { idleMinutes }).then(
       (r) => { if (r.ran) logger?.info('Automatic backup created', { filePath: r.filePath, pruned: r.pruned.length }); },
       (e: Error) => logger?.error('Automatic backup failed', { error: e.message }),
     );
@@ -168,8 +175,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  backend?.close();
-  backend = null;
+  launcher?.close();
+  launcher = null;
 });
 
 void app.whenReady().then(async () => {
@@ -177,14 +184,24 @@ void app.whenReady().then(async () => {
     const arg = (name: string) => process.argv.find((x) => x.startsWith(`--${name}=`))?.slice(name.length + 3);
     const phase = arg('smoke-phase') as SmokePhase | undefined;
     const dir = arg('smoke-data-dir');
-    const code = await runSmokeTest(smokeArg.slice('--smoke-test='.length), app.getVersion(), { ...(phase ? { phase } : {}), ...(dir ? { dataDir: dir } : {}) });
+    const backupFile = arg('smoke-backup');
+    const backupOut = arg('smoke-backup-out');
+    const code = await runSmokeTest(smokeArg.slice('--smoke-test='.length), app.getVersion(), {
+      ...(phase ? { phase } : {}), ...(dir ? { dataDir: dir } : {}), ...(backupFile ? { backupFile } : {}), ...(backupOut ? { backupOut } : {}),
+      deviceKeys: createDeviceKeyStore(process.env.AIRDESK_DEVICE_KEY_DIR ?? join(app.getPath('userData'), 'device-keys')),
+      workerPath: join(__dirname, 'backup-worker.js'),
+    });
     app.exit(code);
     return;
   }
   const dataDir = resolveDataDir(process.env, process.platform, app.isPackaged, app.getPath('userData'));
   logger = createFileLogger(dataDir);
   try {
-    backend = await AppBackend.open({ dataDir, appVersion: app.getVersion(), logger });
+    launcher = await AppLauncher.start({
+      dataDir, appVersion: app.getVersion(), logger,
+      deviceKeys: createDeviceKeyStore(process.env.AIRDESK_DEVICE_KEY_DIR ?? join(app.getPath('userData'), 'device-keys')),
+      workerPath: join(__dirname, 'backup-worker.js'),
+    });
   } catch (e) {
     logger.error('Backend failed to start', { error: (e as Error).message, stack: (e as Error).stack });
     dialog.showErrorBox('AirDesk', `AirDesk could not open its database.\n\n${(e as Error).message}\n\nLogs: ${join(dataDir, 'logs')}`);

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { OPS, OPS_ERRORS, OPS_REASONS } from './i18n-ops';
+import { OPS, OPS_ERRORS, OPS_REASONS, PASSPHRASE_REASONS } from './i18n-ops';
 
 /**
  * Typed i18n. Every entry is an [Arabic, English] pair, so a key cannot exist
@@ -373,6 +373,11 @@ export function I18nProvider({ initial, children }: { initial: Locale; children:
     };
     const errorMessage = (e: unknown) => {
       const err = e as { code?: string; message?: string; details?: Record<string, unknown> };
+      if (err.code === 'PASSPHRASE_POLICY') {
+        const r = PASSPHRASE_REASONS[err.details?.reason as keyof typeof PASSPHRASE_REASONS];
+        if (r) return r[i];
+      }
+      if (err.code === 'WRONG_PASSPHRASE' && typeof err.details?.retryAfterSeconds === 'number') return t('retryIn').replace('{n}', String(err.details.retryAfterSeconds));
       const reason = err.details?.reason as keyof typeof reasons | undefined;
       const field = err.details?.field as string | undefined;
       if (reason && reasons[reason]) return field ? `${fieldLabel(field)}: ${reasons[reason][i]}` : reasons[reason][i];

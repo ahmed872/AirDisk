@@ -1,6 +1,6 @@
 export * from './schemas';
 export * from './dto';
-export { ErrorCode, PERMISSIONS, type PermissionDefinition } from '@airdesk/domain';
+export { ErrorCode, PERMISSIONS, formatRecoveryPassphrase, recoveryPassphraseIssue, type PermissionDefinition } from '@airdesk/domain';
 
 /** The single function the renderer can call (exposed by the preload script). */
 export interface AirDeskBridge {

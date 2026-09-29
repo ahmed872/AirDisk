@@ -35,8 +35,10 @@ class MemoryDeviceKeys implements DeviceKeyStore {
 }
 const NO_DEVICE: DeviceKeyStore = { kind: 'none', isAvailable: () => false, load: () => null, save: () => undefined, forget: () => undefined, list: () => [] };
 
-interface LEnv extends TestEnv {
+interface LEnv extends Omit<TestEnv, 'call'> {
   launcher: AppLauncher;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  call(command: string, payload?: unknown, sessionId?: string | null): Promise<any>;
   status(): Promise<{ vault: string; lockReason?: string; encrypted: boolean | null; setupRequired: boolean; retryAfterSeconds?: number }>;
 }
 
@@ -56,7 +58,7 @@ async function launch(dataDir: string, deviceKeys: DeviceKeyStore, opts: { migra
     dataDir,
     logger,
     call: (command, payload = {}, sessionId = null) => launcher.dispatch({ command, payload, sessionId, workstation: 'TEST-PC' }) as never,
-    status: async () => (await launcher.dispatch({ command: 'system.status', payload: {}, workstation: 'TEST-PC' })).data as never,
+    status: async () => ((await launcher.dispatch({ command: 'system.status', payload: {}, workstation: 'TEST-PC' })) as unknown as { data: never }).data,
   };
   return env;
 }
@@ -502,7 +504,7 @@ describe('upgrading a 1.0.0-rc.1 (unencrypted) installation', () => {
       expect((await env.call('security.enableEncryption', { password: 'wrong password!!', passphrase: PASSPHRASE, confirmation: PASSPHRASE }, s)).error?.code).toBe('INVALID_CREDENTIALS');
       expect((await env.call('security.enableEncryption', { password: ADMIN.password, passphrase: 'aaaaaaaaaaaaaaaa', confirmation: 'aaaaaaaaaaaaaaaa' }, s)).error?.code).toBe('PASSPHRASE_POLICY');
       expect(databaseFileKind(join(dir, 'airdesk.db'))).toBe('PLAIN');
-      const enabled = await env.call<{ backupFilePath: string; unencryptedBackupFiles: number }>('security.enableEncryption', { password: ADMIN.password, passphrase: PASSPHRASE, confirmation: PASSPHRASE }, s);
+      const enabled = await env.call('security.enableEncryption', { password: ADMIN.password, passphrase: PASSPHRASE, confirmation: PASSPHRASE }, s);
       expect(enabled.ok, JSON.stringify(enabled.error)).toBe(true);
       expect(enabled.session).toEqual({ clear: true });
       expect(enabled.data!.unencryptedBackupFiles).toBe(1);

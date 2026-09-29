@@ -14,7 +14,8 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       rollupOptions: {
-        input: resolve(__dirname, 'src/main/index.ts'),
+        // The backup/integrity worker thread is its own entry (out/main/backup-worker.js).
+        input: { index: resolve(__dirname, 'src/main/index.ts'), 'backup-worker': resolve(__dirname, '../../packages/backend/src/worker/worker-entry.ts') },
         external: ['electron', ...NATIVE, /^node:/],
       },
     },

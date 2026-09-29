@@ -60,6 +60,11 @@ try {
     await win.fill('[data-testid=setup-displayName]', 'المالك');
     await win.fill('[data-testid=setup-password]', PW);
     await win.fill('[data-testid=setup-confirm]', PW);
+    // Every new installation is encrypted: the owner sets the recovery passphrase (typed twice, acknowledged).
+    await win.click('[data-testid=recovery-generate]');
+    const recovery = (await win.textContent('[data-testid=recovery-suggested]')).trim();
+    await win.fill('[data-testid=recovery-confirm]', recovery.toLowerCase());
+    await win.check('[data-testid=recovery-ack]');
     await win.click('[data-testid=setup-submit]');
     await win.waitForSelector('[data-testid=setup-done]');
     await login('owner', PW);
