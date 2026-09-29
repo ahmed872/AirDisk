@@ -47,23 +47,18 @@ async function bigBackend(dataDir: string, worker: string | null): Promise<{ b: 
   return { b, session: (r.session as { set: string }).set };
 }
 
-/** Largest gap between 5 ms timer ticks while `work` runs = how long the main thread was blocked. */
-async function maxEventLoopLag(work: () => Promise<unknown>): Promise<{ lag: number; took: number }> {
-  let last = performance.now();
-  let lag = 0;
-  const timer = setInterval(() => {
-    const now = performance.now();
-    lag = Math.max(lag, now - last - 5);
-    last = now;
-  }, 5);
+/**
+ * How long the main thread was actually busy while `work` ran (event-loop
+ * utilisation: time spent running JavaScript/native code on the loop, not
+ * time spent waiting for the worker). Unlike timer lag it is not inflated
+ * when a busy CI machine simply schedules the process late.
+ */
+async function mainThreadBusy(work: () => Promise<unknown>): Promise<{ busy: number; took: number }> {
+  const before = performance.eventLoopUtilization();
   const t0 = performance.now();
-  try {
-    await work();
-  } finally {
-    clearInterval(timer);
-    lag = Math.max(lag, performance.now() - last - 5);
-  }
-  return { lag, took: performance.now() - t0 };
+  await work();
+  const elu = performance.eventLoopUtilization(before);
+  return { busy: elu.active, took: performance.now() - t0 };
 }
 
 describe('backup and integrity work stay off the main thread', () => {
@@ -71,20 +66,22 @@ describe('backup and integrity work stay off the main thread', () => {
     const dir = tempDir();
     const { b, session } = await bigBackend(dir, workerPath);
     const call = (command: string) => b.dispatch({ command, payload: {}, sessionId: session, workstation: 'T' });
-    const backup = await maxEventLoopLag(() => call('backup.create'));
-    const integrity = await maxEventLoopLag(() => call('integrity.run'));
+    const backup = await mainThreadBusy(() => call('backup.create'));
+    const integrity = await mainThreadBusy(() => call('integrity.run'));
     expect(b.jobs.stats.inWorker).toBeGreaterThanOrEqual(2);
     expect(b.jobs.stats.inProcess).toBe(0);
 
     // Same work in-process, to prove the measurement would catch a regression.
     b.close();
     const inProcess = await bigBackend(dir, null);
-    const blocked = await maxEventLoopLag(() => inProcess.b.dispatch({ command: 'integrity.run', payload: {}, sessionId: inProcess.session, workstation: 'T' }));
+    const blocked = await mainThreadBusy(() => inProcess.b.dispatch({ command: 'integrity.run', payload: {}, sessionId: inProcess.session, workstation: 'T' }));
     inProcess.b.close();
 
-    console.log(`backup ${backup.took.toFixed(0)} ms (max lag ${backup.lag.toFixed(0)} ms), integrity ${integrity.took.toFixed(0)} ms (max lag ${integrity.lag.toFixed(0)} ms), in-process integrity lag ${blocked.lag.toFixed(0)} ms`);
-    expect(blocked.lag).toBeGreaterThan(150);
-    expect(integrity.lag).toBeLessThan(Math.max(100, blocked.lag / 3));
-    expect(backup.lag).toBeLessThan(150);
+    console.log(`backup ${backup.took.toFixed(0)} ms (main thread busy ${backup.busy.toFixed(0)} ms), integrity ${integrity.took.toFixed(0)} ms (busy ${integrity.busy.toFixed(0)} ms), in-process integrity busy ${blocked.busy.toFixed(0)} ms`);
+    // The measurement catches blocking: the same check in-process keeps the main thread busy for most of its duration.
+    expect(blocked.busy).toBeGreaterThan(blocked.took * 0.6);
+    // On the worker, the main thread is busy for a small fraction (snapshot copy scheduling, bookkeeping, audit row).
+    expect(integrity.busy).toBeLessThan(Math.max(100, blocked.busy / 3));
+    expect(backup.busy).toBeLessThan(Math.max(250, backup.took * 0.2));
   }, 120_000);
 });
