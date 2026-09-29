@@ -6,7 +6,11 @@ export { runMigrations, planMigrations, migrationChecksum, schemaVersion, type M
 export { seedSystemData } from './db/seed';
 export { AuditLog, GENESIS_HASH, SYSTEM_ACTOR } from './audit/audit-log';
 export { runIntegrityChecks } from './integrity/integrity-service';
-export { createBackupFile, validateBackupFile, recoverPendingRestore, BACKUP_EXTENSION } from './backup/backup-service';
+export { validateBackupFile, recoverPendingRestore, inspectBackup, BACKUP_EXTENSION, type BackupHeader } from './backup/backup-service';
+export { AppLauncher, type LauncherOptions, type LaunchState } from './app/launcher';
+export { Vault, NO_DEVICE_KEYS, KEY_FILE_NAME, databaseFileKind, type DeviceKeyStore } from './security/vault';
+export { PRODUCTION_KDF, TEST_KDF, type KdfParams, type RecoveryWrap } from './security/keyring';
+export { JobRunner } from './worker/job-runner';
 export { createArgon2Hasher, PRODUCTION_ARGON2, TEST_ARGON2, type PasswordHasher } from './security/password-hasher';
 export { ManualClock, systemClock, type Clock } from './util/clock';
 export { createUlidGenerator } from './util/ids';

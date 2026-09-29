@@ -12,6 +12,7 @@ export * from './ledger/reversal';
 export * from './ledger/period';
 export * from './security/permissions';
 export * from './security/password-policy';
+export * from './security/recovery-passphrase';
 export * from './text/normalize';
 export * from './contact/contact';
 export * from './masterdata/masterdata';

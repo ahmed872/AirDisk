@@ -6,11 +6,11 @@ export interface OpenDatabaseOptions {
   readonly?: boolean;
   fileMustExist?: boolean;
   /**
-   * 32-byte data key for encryption at rest (SQLCipher v4 format). Key
-   * management (DPAPI + recovery passphrase) is specified in
-   * docs/phase-1/encryption-and-keys.md and enabled in Phase 10.
+   * 32-byte data key for encryption at rest (SQLCipher v4 format via SQLite3
+   * Multiple Ciphers). Key management: security/vault.ts and
+   * docs/product/encryption-plan.md.
    */
-  encryptionKey?: Buffer;
+  encryptionKey?: Buffer | null;
   /** Default true. Backup snapshots use rollback-journal mode so they are a single self-contained file. */
   wal?: boolean;
 }
@@ -23,11 +23,9 @@ export function openDatabase(opts: OpenDatabaseOptions): Db {
   const db = new Database(opts.path, { readonly: opts.readonly ?? false, fileMustExist: opts.fileMustExist ?? false });
   try {
     if (opts.encryptionKey) {
-      if (opts.encryptionKey.length !== 32) throw new Error('encryption key must be 32 bytes');
-      db.pragma(`cipher='sqlcipher'`);
-      db.pragma('legacy=4');
+      selectCipher(db);
       // Hex digits only — no user text is ever interpolated into this pragma.
-      db.pragma(`hexkey='${opts.encryptionKey.toString('hex')}'`);
+      db.pragma(`hexkey='${keyHex(opts.encryptionKey)}'`);
     }
     // Forces the key to be checked (throws SQLITE_NOTADB on a wrong key).
     db.prepare('SELECT count(*) AS n FROM sqlite_master').get();
@@ -40,6 +38,27 @@ export function openDatabase(opts: OpenDatabaseOptions): Db {
     db.close();
     throw e;
   }
+}
+
+function keyHex(key: Buffer): string {
+  if (key.length !== 32) throw new Error('encryption key must be 32 bytes');
+  return key.toString('hex');
+}
+
+/** SQLCipher v4 page format (AES-256-CBC + HMAC-SHA512 per page, PBKDF2 skipped for raw keys). */
+function selectCipher(db: Db): void {
+  db.pragma(`cipher='sqlcipher'`);
+  db.pragma('legacy=4');
+}
+
+/**
+ * Re-encrypts an open database in place with a new key (also turns a plain
+ * database into an encrypted one). Only ever used on private working copies
+ * (snapshot/restore/encryption temp files), never on the live database.
+ */
+export function rekeyDatabase(db: Db, newKey: Buffer): void {
+  selectCipher(db);
+  db.pragma(`hexrekey='${keyHex(newKey)}'`);
 }
 
 /**

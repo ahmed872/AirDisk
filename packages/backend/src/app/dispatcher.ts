@@ -1,6 +1,6 @@
 import { ZodError } from 'zod';
 import { DomainError, ErrorCode, isDomainError } from '@airdesk/domain';
-import { commandSchemas, type AboutDto, type AuditEntryDto, type CommandError, type CommandName, type CommandResult, type DashboardSummaryDto, type SystemStatusDto } from '@airdesk/contracts';
+import { commandSchemas, type AboutDto, type BackupHeaderDto, type AuditEntryDto, type CommandError, type CommandName, type CommandResult, type DashboardSummaryDto, type SystemStatusDto } from '@airdesk/contracts';
 import { requirePermission, type Actor } from '../services/context';
 import type { AppBackend } from './backend';
 
@@ -34,6 +34,9 @@ const PUBLIC: Access = { kind: 'public' };
 const AUTH: Access = { kind: 'authenticated' };
 const perm = (...anyOf: string[]): Access => ({ kind: 'permission', anyOf });
 const actor = (ctx: Ctx): Actor => ctx.actor!;
+const alreadyOpen = (): never => {
+  throw new DomainError(ErrorCode.CONFLICT, 'The company data is already open', { reason: 'ALREADY_OPEN' });
+};
 
 /**
  * The command registry. EVERY command declares its access rule here; the type
@@ -56,9 +59,23 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
         companyName: setupRequired ? null : s.company.core().legalNameAr,
         defaultLocale: setupRequired ? 'ar' : s.company.get().defaultLocale,
         ...(setupRequired ? { setupCurrencies: s.currencies.list().map((c) => ({ code: c.code, nameAr: c.nameAr, nameEn: c.nameEn })) } : {}),
+        vault: 'READY',
+        encrypted: backend.isEncrypted,
       };
     },
   },
+  // Launcher commands only make sense before the data is open (AppLauncher answers them); here the data is already open.
+  'vault.unlock': { access: PUBLIC, run: () => alreadyOpen() },
+  'vault.inspectBackup': { access: PUBLIC, run: () => alreadyOpen() },
+  'vault.restoreBackup': { access: PUBLIC, run: () => alreadyOpen() },
+
+  'security.encryptionStatus': { access: perm('settings.system', 'backup.create', 'backup.restore'), run: (ctx) => ctx.backend.encryptionStatus(actor(ctx)) },
+  'security.enableEncryption': {
+    access: perm('settings.system'),
+    run: async (ctx, i) => ({ __session: { clear: true }, ...(await ctx.backend.enableEncryption(actor(ctx), i)) }),
+  },
+  'security.changeRecoveryPassphrase': { access: perm('settings.system'), run: (ctx, i) => ctx.backend.changeRecoveryPassphrase(actor(ctx), i) },
+  'security.purgeUnencryptedBackups': { access: perm('settings.system'), run: (ctx, i) => ctx.backend.purgeUnencryptedBackups(actor(ctx), i.password) },
   'system.setup': {
     access: PUBLIC,
     run: async ({ backend, workstation }, input) => {
@@ -196,8 +213,15 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
   'backup.restore': {
     access: perm('backup.restore'),
     run: async (ctx, i) => {
-      const r = await ctx.backend.restore(actor(ctx), i.filePath, i.password);
+      const r = await ctx.backend.restore(actor(ctx), i.filePath, i.password, i.backupPassphrase);
       return { __session: { clear: true }, preRestoreBackup: r.preRestoreBackup };
+    },
+  },
+  'backup.inspect': {
+    access: perm('backup.restore'),
+    run: async (ctx, i): Promise<BackupHeaderDto> => {
+      const h = await ctx.backend.inspectBackup(actor(ctx), i.filePath);
+      return { format: h.format, encrypted: h.encrypted, appVersion: h.appVersion, schemaVersion: h.schemaVersion, createdAt: h.createdAt, kind: h.kind, keyCreatedAt: h.keyCreatedAt, sameKey: !!h.keyId && h.keyId === ctx.backend.vault.recoveryWrap?.keyId };
     },
   },
 

@@ -13,6 +13,10 @@ export const currencyCode = z.string().regex(/^[A-Z]{3}$/);
 export const locale = z.enum(['ar', 'en']);
 const username = z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9._-]+$/, 'letters, digits, . _ -');
 const password = z.string().min(1).max(128);
+/** Recovery passphrases are checked by the domain rules on the backend (length, not trivial, confirmation). */
+const passphrase = z.string().min(1).max(400);
+const filePath = z.string().min(1).max(1000);
+export const recoveryInput = z.object({ passphrase, confirmation: passphrase }).strict();
 const roleCode = z.string().trim().min(2).max(40).regex(/^[A-Z][A-Z0-9_]*$/);
 const permissionCode = z.string().regex(/^[a-z_]+(\.[a-z_]+)+$/);
 
@@ -177,8 +181,22 @@ export const commandSchemas = {
     .object({
       company: companyProfileInput,
       admin: z.object({ username, displayName: text(100), password, locale }).strict(),
+      /** Required when the database does not exist yet: every new installation is encrypted. */
+      recovery: recoveryInput.optional(),
     })
     .strict(),
+
+  // Before the company data is open (new PC, locked, damaged): handled by the launcher.
+  'vault.unlock': z.object({ passphrase, keySourceBackupPath: filePath.optional().nullable() }).strict(),
+  'vault.inspectBackup': z.object({ filePath }).strict(),
+  'vault.restoreBackup': z
+    .object({ filePath, passphrase: passphrase.optional().nullable(), newRecovery: recoveryInput.optional().nullable(), confirmation: z.literal('RESTORE') })
+    .strict(),
+
+  'security.encryptionStatus': z.object({}).strict(),
+  'security.enableEncryption': z.object({ password, passphrase, confirmation: passphrase }).strict(),
+  'security.changeRecoveryPassphrase': z.object({ password, passphrase, confirmation: passphrase }).strict(),
+  'security.purgeUnencryptedBackups': z.object({ password, confirmation: z.literal('DELETE') }).strict(),
 
   'auth.login': z.object({ username: z.string().trim().min(1).max(40), password }).strict(),
   'auth.logout': z.object({}).strict(),
@@ -224,7 +242,8 @@ export const commandSchemas = {
   'backup.list': z.object({}).strict(),
   'backup.schedule': z.object({}).strict(),
   'backup.setSchedule': z.object({ intervalHours: z.number().int().min(0).max(720), keep: z.number().int().min(1).max(365) }).strict(),
-  'backup.restore': z.object({ filePath: z.string().min(1).max(1000), password, confirmation: z.literal('RESTORE') }).strict(),
+  'backup.restore': z.object({ filePath, password, confirmation: z.literal('RESTORE'), backupPassphrase: passphrase.optional().nullable() }).strict(),
+  'backup.inspect': z.object({ filePath }).strict(),
 
   'audit.list': z
     .object({

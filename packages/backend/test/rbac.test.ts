@@ -5,10 +5,23 @@ import { HANDLERS, accessOf } from '../src';
 import { auditActions, ready, userWithRoles } from './helpers';
 
 describe('command registry', () => {
-  it('declares an access rule for every contract command, and only 3 are public', () => {
+  it('declares an access rule for every contract command, and only the pre-login ones are public', () => {
     expect(Object.keys(HANDLERS).sort()).toEqual([...COMMAND_NAMES].sort());
     const publicOnes = COMMAND_NAMES.filter((c) => accessOf(c).kind === 'public').sort();
-    expect(publicOnes).toEqual(['auth.login', 'system.setup', 'system.status']);
+    // vault.* exist only for the launcher (before the data is open); once open they are refused (see encryption tests).
+    expect(publicOnes).toEqual(['auth.login', 'system.setup', 'system.status', 'vault.inspectBackup', 'vault.restoreBackup', 'vault.unlock']);
+  });
+
+  it('launcher-only commands are refused once the company data is open', async () => {
+    const { env } = await ready();
+    for (const [command, payload] of [
+      ['vault.unlock', { passphrase: 'anything at all' }],
+      ['vault.inspectBackup', { filePath: '/tmp/x.adbk' }],
+      ['vault.restoreBackup', { filePath: '/tmp/x.adbk', passphrase: 'x', confirmation: 'RESTORE' }],
+    ] as const) {
+      const r = await env.call(command, payload, null);
+      expect(!r.ok && r.error.code, command).toBe('CONFLICT');
+    }
   });
 
   it('does not expose generic ledger posting over the transport', () => {

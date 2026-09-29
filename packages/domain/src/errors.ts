@@ -36,6 +36,20 @@ export const ErrorCode = {
   DATABASE_TOO_NEW: 'DATABASE_TOO_NEW',
   INTEGRITY_FAILURE: 'INTEGRITY_FAILURE',
   BACKUP_INVALID: 'BACKUP_INVALID',
+  /** Recovery passphrase does not meet the rules (reason in details). */
+  PASSPHRASE_POLICY: 'PASSPHRASE_POLICY',
+  /** The recovery passphrase does not open this key (or backup). */
+  WRONG_PASSPHRASE: 'WRONG_PASSPHRASE',
+  /** The backup was encrypted with another key: its recovery passphrase is needed. */
+  PASSPHRASE_REQUIRED: 'PASSPHRASE_REQUIRED',
+  /** The company data is encrypted and not unlocked on this PC/Windows user yet. */
+  DATABASE_LOCKED: 'DATABASE_LOCKED',
+  /** The database file cannot be read with the correct key (damaged). */
+  DATABASE_DAMAGED: 'DATABASE_DAMAGED',
+  /** The key file next to the database is unreadable or does not match the database. */
+  KEY_FILE_DAMAGED: 'KEY_FILE_DAMAGED',
+  /** A maintenance operation (encryption, restore) is running; try again when it finishes. */
+  MAINTENANCE: 'MAINTENANCE',
   INTERNAL: 'INTERNAL',
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

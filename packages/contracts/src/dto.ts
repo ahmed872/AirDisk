@@ -17,6 +17,39 @@ export interface SystemStatusDto {
   defaultLocale: 'ar' | 'en';
   /** Only while first-run setup is pending: the currencies that can be chosen as base currency. */
   setupCurrencies?: { code: string; nameAr: string; nameEn: string }[];
+  /**
+   * NEW: no company data on this PC yet (set up or restore a backup).
+   * LOCKED: the data is encrypted and must be unlocked with the recovery passphrase (or restored).
+   * READY: open.
+   */
+  vault: 'NEW' | 'LOCKED' | 'READY';
+  lockReason?: 'PASSPHRASE_REQUIRED' | 'KEY_FILE_MISSING' | 'KEY_FILE_DAMAGED' | 'DATABASE_DAMAGED';
+  /** Whether the open company data is encrypted at rest (null until known). */
+  encrypted: boolean | null;
+  /** Seconds to wait before the next unlock attempt (after wrong passphrases). */
+  retryAfterSeconds?: number;
+}
+
+export interface EncryptionStatusDto {
+  encrypted: boolean;
+  keyCreatedAt: string | null;
+  /** 'dpapi' on Windows: this Windows user opens the data without the passphrase; 'none': passphrase at every start. */
+  deviceProtection: string;
+  /** Backup files / database copies on this PC that are still unencrypted. */
+  unencryptedBackupFiles: number;
+}
+
+export interface BackupHeaderDto {
+  format: 1 | 2;
+  encrypted: boolean;
+  appVersion: string;
+  schemaVersion: number;
+  createdAt: string;
+  kind: string;
+  /** When the recovery passphrase that opens this backup was set. */
+  keyCreatedAt: string | null;
+  /** True when this installation's own key opens it (no passphrase needed). */
+  sameKey: boolean;
 }
 
 export interface SessionUserDto {

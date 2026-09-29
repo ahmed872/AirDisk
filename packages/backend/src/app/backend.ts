@@ -1,17 +1,22 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { isAbsolute, join, normalize } from 'node:path';
-import { ChartOfAccounts, DomainError, ErrorCode } from '@airdesk/domain';
-import type { BackupRecordDto, IntegrityReportDto } from '@airdesk/contracts';
+import { ChartOfAccounts, DomainError, ErrorCode, assertRecoveryPassphrase } from '@airdesk/domain';
+import type { BackupRecordDto, EncryptionStatusDto, IntegrityReportDto } from '@airdesk/contracts';
 import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
 import {
   BACKUP_EXTENSION,
   appendBackupHistory,
-  createBackupFile,
+  auditAnchors,
+  migrateWorkingCopy,
   recoverPendingRestore,
-  swapInRestoredDatabase,
-  validateBackupFile,
+  snapshotDatabase,
+  swapInDatabase,
+  quickBackupIsEncrypted,
+  type BackupHeader,
   type BackupKind,
   type BackupResult,
+  type PackageJobResult,
+  type ValidatedBackup,
 } from '../backup/backup-service';
 import { assertLocalPath, openDatabase } from '../db/connection';
 import type { Db } from '../db/driver';
@@ -40,6 +45,8 @@ import { ReportService } from '../services/report-service';
 import { systemClock, type Clock } from '../util/clock';
 import { createUlidGenerator, type IdGenerator } from '../util/ids';
 import { consoleLogger, type Logger } from '../util/logger';
+import { NO_DEVICE_KEYS, Vault, databaseFileKind } from '../security/vault';
+import { JobRunner } from '../worker/job-runner';
 import { dispatchCommand, type DispatchRequest, type DispatchResponse } from './dispatcher';
 
 export interface BackendOptions {
@@ -50,6 +57,14 @@ export interface BackendOptions {
   clock?: Clock;
   hasher?: PasswordHasher;
   migrations?: readonly Migration[];
+  /**
+   * Key holder for encryption at rest. When it is unlocked the database is
+   * opened (and created) encrypted with its key; without one the database is
+   * plain (1.0.0-rc.1 installations until encryption is enabled, and tests).
+   */
+  vault?: Vault;
+  /** Script of the backup worker thread (bundled by the desktop app). Null/absent: run jobs in-process. */
+  workerPath?: string | null;
 }
 
 export interface Services {
@@ -84,27 +99,43 @@ export class AppBackend {
   private services!: Services;
   private lastStartupIntegrity: IntegrityReportDto | null = null;
 
+  readonly jobs: JobRunner;
+
   private constructor(
-    private readonly opts: Required<Omit<BackendOptions, 'migrations'>> & { migrations: readonly Migration[] },
+    private readonly opts: Required<Omit<BackendOptions, 'migrations' | 'workerPath'>> & { migrations: readonly Migration[] },
     private readonly newId: IdGenerator,
-  ) {}
+    workerPath: string | null,
+  ) {
+    this.jobs = new JobRunner(workerPath, opts.logger);
+  }
 
   static async open(options: BackendOptions): Promise<AppBackend> {
     assertLocalPath(options.dataDir);
     mkdirSync(options.dataDir, { recursive: true });
+    const logger = options.logger ?? consoleLogger;
     const backend = new AppBackend(
       {
         dataDir: options.dataDir,
         appVersion: options.appVersion,
-        logger: options.logger ?? consoleLogger,
+        logger,
         clock: options.clock ?? systemClock,
         hasher: options.hasher ?? createArgon2Hasher(),
         migrations: options.migrations ?? MIGRATIONS,
+        vault: options.vault ?? new Vault(options.dataDir, NO_DEVICE_KEYS, undefined, logger),
       },
       createUlidGenerator(),
+      options.workerPath ?? null,
     );
     await backend.start();
     return backend;
+  }
+
+  get vault(): Vault {
+    return this.opts.vault;
+  }
+
+  get isEncrypted(): boolean {
+    return this.opts.vault.dataKey !== null;
   }
 
   get livePath(): string {
@@ -125,9 +156,15 @@ export class AppBackend {
   }
 
   dispatch(req: DispatchRequest): Promise<DispatchResponse> {
+    if (this.maintenance && req.command !== 'system.status') {
+      return Promise.resolve({ ok: false, error: { code: ErrorCode.MAINTENANCE, message: 'AirDesk is busy with a maintenance task; try again in a moment', details: { task: this.maintenance } } });
+    }
     if (req.sessionId) this.lastUserActivityAt = this.opts.clock.now().getTime();
     return dispatchCommand(this, req);
   }
+
+  /** Set while the database is being swapped (restore, encryption): every other command is refused. */
+  private maintenance: string | null = null;
 
   /** Last time a signed-in user did anything (used to keep automatic backups out of the way). */
   private lastUserActivityAt = 0;
@@ -144,30 +181,35 @@ export class AppBackend {
     }
   }
 
-  private async start(): Promise<void> {
-    const { logger } = this.opts;
-    const recovery = recoverPendingRestore(this.livePath);
-    if (recovery !== 'NONE') logger.warn('Recovered an interrupted restore', { outcome: recovery });
+  private openLive(): Db {
+    return openDatabase({ path: this.livePath, encryptionKey: this.opts.vault.dataKey });
+  }
 
-    this.db = openDatabase({ path: this.livePath });
+  private async start(): Promise<void> {
+    const { logger, vault } = this.opts;
+    const recovery = recoverPendingRestore(this.livePath, (keyId) => vault.loadDeviceKey(keyId, vault.recoveryWrap));
+    if (recovery === 'NEEDS_KEY') throw new DomainError(ErrorCode.DATABASE_LOCKED, 'An interrupted restore needs the recovery passphrase to finish');
+    if (recovery !== 'NONE') logger.warn('Recovered an interrupted restore', { outcome: recovery });
+    const fileKind = databaseFileKind(this.livePath);
+    if (fileKind === 'ENCRYPTED' && !vault.dataKey) throw new DomainError(ErrorCode.DATABASE_LOCKED, 'The company data is encrypted and has not been unlocked');
+    if (fileKind === 'PLAIN' && vault.dataKey) throw new DomainError(ErrorCode.KEY_FILE_DAMAGED, 'An encryption key was supplied for an unencrypted database');
+
+    this.db = this.openLive();
+    // A key unlocked through this PC's protected store may have lost its key file: rebuild it from the database copy.
+    if (vault.dataKey && !vault.recoveryWrap && vault.restoreKeyFileFromDatabase(this.db)) logger.warn('Rebuilt the encryption key file from the database');
     const plan = planMigrations(this.db, this.opts.migrations);
     if (plan.pending.length > 0 && plan.currentVersion > 0) {
       // Phase 0 §07-5.1 rule 4: never migrate without a verified backup first.
-      const result = await createBackupFile({
-        db: this.db,
-        destinationDir: join(this.opts.dataDir, 'backups'),
-        workDir: this.opts.dataDir,
-        kind: 'PRE_MIGRATION',
-        appVersion: this.opts.appVersion,
-        createdBy: null,
-        clock: this.opts.clock,
-        newId: this.newId,
-        maxSchemaVersion: plan.currentVersion,
+      const createdAt = this.opts.clock.now().toISOString();
+      const result = await this.packageBackup('PRE_MIGRATION', join(this.opts.dataDir, 'backups'), null, createdAt, plan.currentVersion);
+      appendBackupHistory(this.opts.dataDir, {
+        kind: 'PRE_MIGRATION', status: 'SUCCEEDED', filePath: result.filePath, sha256: result.sha256, at: createdAt, fromVersion: plan.currentVersion,
+        encrypted: result.manifest.encrypted, auditSeq: result.manifest.auditSeq, auditHeadHash: result.manifest.auditHeadHash,
       });
-      appendBackupHistory(this.opts.dataDir, { kind: 'PRE_MIGRATION', status: 'SUCCEEDED', filePath: result.filePath, sha256: result.sha256, at: result.manifest.createdAt, fromVersion: plan.currentVersion });
     }
     runMigrations(this.db, this.opts.migrations, { appVersion: this.opts.appVersion, now: () => this.opts.clock.now().toISOString() });
     seedSystemData(this.db, { newId: this.newId, now: this.opts.clock.now().toISOString(), appVersion: this.opts.appVersion });
+    this.syncKeyCopy();
     this.services = this.buildServices(this.db);
     this.ensureSearchIndex();
     this.services.reference.ensureDefaultMoneyAccount(null);
@@ -240,12 +282,45 @@ export class AppBackend {
 
   // ---- system operations that need the database handle itself ----
 
-  runIntegrity(actor: Actor): IntegrityReportDto {
+  /** Full integrity check on the live database, run on the worker thread (its own read-only connection). */
+  async runIntegrity(actor: Actor): Promise<IntegrityReportDto> {
     requirePermission(this.services.deps, actor, 'integrity.run', 'integrity.run');
-    const report = runIntegrityChecks(this.db, this.services.deps.audit, this.opts.clock);
+    const report = await this.jobs.run<IntegrityReportDto>({
+      type: 'integrity', dbPath: this.livePath, keyHex: this.opts.vault.dataKey?.toString('hex') ?? null,
+      anchors: auditAnchors(this.opts.dataDir), ranAt: this.opts.clock.now().toISOString(),
+    });
     this.services.deps.audit.append(actorOf(actor), { action: 'integrity.check_run', entityType: 'system', metadata: { ok: report.ok } });
     return report;
   }
+
+  /**
+   * Snapshot (main thread, non-blocking file copy) + verification and
+   * packaging (worker thread). The snapshot never leaves the local data disk.
+   */
+  private async packageBackup(kind: BackupKind, destinationDir: string, createdBy: string | null, createdAt: string, maxSchemaVersion: number): Promise<BackupResult> {
+    mkdirSync(destinationDir, { recursive: true });
+    const id = this.newId();
+    const snapshotPath = join(this.opts.dataDir, `.snapshot-${id}.sqlite`);
+    const stamp = createdAt.replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
+    const finalPath = join(destinationDir, `AirDesk-${stamp}-${kind.toLowerCase()}-${id.slice(-6)}${BACKUP_EXTENSION}`);
+    const { vault } = this.opts;
+    try {
+      await snapshotDatabase(this.db, this.livePath, snapshotPath);
+      const r = await this.jobs.run<PackageJobResult>({
+        type: 'package', snapshotPath, finalPath, tempDir: this.opts.dataDir, kind, appVersion: this.opts.appVersion, createdBy, createdAt,
+        keyHex: vault.dataKey?.toString('hex') ?? null, keyWrap: vault.recoveryWrap, maxSchemaVersion,
+      });
+      return { id, filePath: finalPath, sha256: r.sha256, sizeBytes: r.sizeBytes, manifest: r.manifest };
+    } catch (e) {
+      throw e instanceof DomainError ? e : new DomainError(ErrorCode.BACKUP_INVALID, `Backup failed: ${(e as Error).message}`);
+    } finally {
+      for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(`${snapshotPath}${suffix}`, { force: true });
+    }
+  }
+
+  /** Backups run one at a time (a second request waits for the first). */
+  private backupQueue: Promise<unknown> = Promise.resolve();
+  private backupsInFlight = 0;
 
   async createBackup(actor: Actor | null, kind: BackupKind, destinationDir?: string): Promise<BackupResult> {
     if (actor) requirePermission(this.services.deps, actor, 'backup.create', 'backup.create');
@@ -254,27 +329,39 @@ export class AppBackend {
     if (destinationDir !== undefined && (!isAbsolute(destinationDir) || normalize(destinationDir).split(/[\\/]/).includes('..'))) {
       throw new DomainError(ErrorCode.VALIDATION, 'The backup folder must be a full path', { field: 'destinationDir', reason: 'INVALID_PATH' });
     }
+    this.backupsInFlight++;
+    const run = this.backupQueue.then(() => this.createBackupNow(actor, kind, destinationDir));
+    this.backupQueue = run.catch(() => undefined);
+    try {
+      return await run;
+    } finally {
+      this.backupsInFlight--;
+    }
+  }
+
+  private async createBackupNow(actor: Actor | null, kind: BackupKind, destinationDir?: string): Promise<BackupResult> {
     const dest = destinationDir ?? this.backupDir;
     const startedAt = this.opts.clock.now().toISOString();
     const deps = this.services.deps;
     const auditActor = actor ? actorOf(actor) : SYSTEM_ACTOR;
+    const encrypted = this.isEncrypted ? 1 : 0;
     try {
-      const result = await createBackupFile({
-        db: this.db, destinationDir: dest, workDir: this.opts.dataDir, kind, appVersion: this.opts.appVersion, createdBy: actor?.username ?? null,
-        clock: this.opts.clock, newId: this.newId, maxSchemaVersion: this.opts.migrations.length,
-      });
+      const result = await this.packageBackup(kind, dest, actor?.username ?? null, startedAt, this.opts.migrations.length);
       const finishedAt = this.opts.clock.now().toISOString();
       deps.db.transaction(() => {
         deps.db
           .prepare(
             `INSERT INTO backup_record (id, kind, started_at, finished_at, status, file_path, file_size_bytes, sha256, schema_version,
-               app_version, is_encrypted, verified_at, created_by) VALUES (?, ?, ?, ?, 'SUCCEEDED', ?, ?, ?, ?, ?, 0, ?, ?)`,
+               app_version, is_encrypted, verified_at, created_by) VALUES (?, ?, ?, ?, 'SUCCEEDED', ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(result.id, kind, startedAt, finishedAt, result.filePath, result.sizeBytes, result.sha256, result.manifest.schemaVersion,
-            this.opts.appVersion, finishedAt, actor?.userId ?? null);
-        deps.audit.append(auditActor, { action: 'backup.created', entityType: 'backup', entityId: result.id, metadata: { kind, filePath: result.filePath, sha256: result.sha256 } });
+            this.opts.appVersion, encrypted, finishedAt, actor?.userId ?? null);
+        deps.audit.append(auditActor, { action: 'backup.created', entityType: 'backup', entityId: result.id, metadata: { kind, filePath: result.filePath, sha256: result.sha256, encrypted: encrypted === 1 } });
       })();
-      appendBackupHistory(this.opts.dataDir, { kind, status: 'SUCCEEDED', filePath: result.filePath, sha256: result.sha256, at: finishedAt });
+      appendBackupHistory(this.opts.dataDir, {
+        kind, status: 'SUCCEEDED', filePath: result.filePath, sha256: result.sha256, at: finishedAt, encrypted: encrypted === 1,
+        auditSeq: result.manifest.auditSeq, auditHeadHash: result.manifest.auditHeadHash,
+      });
       return result;
     } catch (e) {
       const message = (e as Error).message;
@@ -282,9 +369,9 @@ export class AppBackend {
         deps.db
           .prepare(
             `INSERT INTO backup_record (id, kind, started_at, finished_at, status, schema_version, app_version, is_encrypted, error_message, created_by)
-             VALUES (?, ?, ?, ?, 'FAILED', ?, ?, 0, ?, ?)`,
+             VALUES (?, ?, ?, ?, 'FAILED', ?, ?, ?, ?, ?)`,
           )
-          .run(this.newId(), kind, startedAt, this.opts.clock.now().toISOString(), schemaVersion(this.db), this.opts.appVersion, message.slice(0, 1000), actor?.userId ?? null);
+          .run(this.newId(), kind, startedAt, this.opts.clock.now().toISOString(), schemaVersion(this.db), this.opts.appVersion, encrypted, message.slice(0, 1000), actor?.userId ?? null);
         deps.audit.append(auditActor, { action: 'backup.failed', entityType: 'backup', metadata: { kind, error: message.slice(0, 500) } });
       })();
       appendBackupHistory(this.opts.dataDir, { kind, status: 'FAILED', error: message, at: startedAt });
@@ -305,7 +392,7 @@ export class AppBackend {
     const hours = readSetting(this.db, 'backup.auto_interval_hours');
     // Never while someone is working: a backup of a large database can hold the app for several seconds.
     const busy = opts.idleMinutes !== undefined && this.opts.clock.now().getTime() - this.lastUserActivityAt < opts.idleMinutes * 60_000;
-    if (hours === 0 || busy || this.restoring || this.automaticBackupRunning || this.services.auth.isSetupRequired()) return { ran: false, pruned: [] };
+    if (hours === 0 || busy || this.restoring || this.maintenance || this.automaticBackupRunning || this.services.auth.isSetupRequired()) return { ran: false, pruned: [] };
     const last = this.lastSuccessfulBackupAt();
     if (last && this.opts.clock.now().getTime() - Date.parse(last) < hours * 3_600_000) return { ran: false, pruned: [] };
     this.automaticBackupRunning = true;
@@ -377,51 +464,249 @@ export class AppBackend {
 
   /**
    * Safe restore (Phase 0 §10-5): step-up password, full validation of the
-   * file, mandatory PRE_RESTORE backup, crash-safe atomic swap, reopen,
-   * migrate/seed, integrity check. All sessions end; users sign in again.
+   * file on the worker thread, mandatory PRE_RESTORE backup, crash-safe atomic
+   * swap, reopen, migrate/seed, integrity check. All sessions end; users sign
+   * in again.
+   *
+   * Keys: the restored database always ends up in THIS installation's key (an
+   * encrypted backup made with another key needs its recovery passphrase and is
+   * re-encrypted; a plain backup is encrypted on the way in). A plain
+   * installation that restores an encrypted backup adopts that backup's key and
+   * recovery passphrase.
    */
-  async restore(actor: Actor, filePath: string, password: string): Promise<{ manifest: unknown; preRestoreBackup: string }> {
+  async restore(actor: Actor, filePath: string, password: string, backupPassphrase?: string | null): Promise<{ manifest: unknown; preRestoreBackup: string }> {
     requirePermission(this.services.deps, actor, 'backup.restore', 'backup.restore');
     await this.services.auth.confirmPassword(actor, password);
-    if (this.automaticBackupRunning) throw new DomainError(ErrorCode.CONFLICT, 'An automatic backup is running; try again in a minute', { reason: 'BACKUP_RUNNING' });
+    if (this.automaticBackupRunning || this.backupsInFlight > 0) throw new DomainError(ErrorCode.CONFLICT, 'A backup is running; try again in a minute', { reason: 'BACKUP_RUNNING' });
+    if (this.restoring || this.maintenance) throw new DomainError(ErrorCode.MAINTENANCE, 'Another maintenance task is running');
     this.restoring = true;
     try {
-      return await this.restoreValidated(actor, filePath);
+      return await this.restoreValidated(actor, filePath, backupPassphrase ?? null);
     } finally {
       this.restoring = false;
     }
   }
 
-  private async restoreValidated(actor: Actor, filePath: string): Promise<{ manifest: unknown; preRestoreBackup: string }> {
-    const validated = validateBackupFile(filePath, { maxSchemaVersion: this.opts.migrations.length, tempDir: this.opts.dataDir });
+  private async restoreValidated(actor: Actor, filePath: string, backupPassphrase: string | null): Promise<{ manifest: unknown; preRestoreBackup: string }> {
+    const { vault } = this.opts;
+    const current = vault.dataKey;
+    const validated = await this.jobs.run<ValidatedBackup>({
+      type: 'validate', filePath, tempDir: this.opts.dataDir, maxSchemaVersion: this.opts.migrations.length,
+      currentKeyHex: current?.toString('hex') ?? null, passphrase: backupPassphrase, target: current ? { rekeyToHex: current.toString('hex') } : 'KEEP', keepTemp: true,
+    });
+    // Plain installation + encrypted backup: adopt the backup's key (proven by its passphrase).
+    const adopt = !current && validated.backupWrap ? { dk: Buffer.from(validated.backupKeyHex!, 'hex'), wrap: validated.backupWrap } : null;
+    const incomingKey = current ?? adopt?.dk ?? null;
     let safety: BackupResult;
     try {
       safety = await this.createBackup(null, 'PRE_RESTORE');
     } catch (e) {
+      rmSync(validated.tempDbPath, { force: true });
       throw new DomainError(ErrorCode.BACKUP_INVALID, `Restore cancelled: the safety backup of the current data failed (${(e as Error).message})`);
     }
     this.services.deps.audit.append(actorOf(actor), {
-      action: 'backup.restore_started', entityType: 'backup', metadata: { filePath, backupCreatedAt: validated.manifest.createdAt, safetyBackup: safety.filePath },
+      action: 'backup.restore_started', entityType: 'backup',
+      metadata: { filePath, backupCreatedAt: validated.manifest.createdAt, safetyBackup: safety.filePath, backupEncrypted: validated.manifest.encrypted, adoptsBackupKey: !!adopt },
     });
     this.services.sessions.endAll('FORCED');
+    this.maintenance = 'RESTORE';
     this.db.close();
+    let swapped = false;
     try {
-      swapInRestoredDatabase({ livePath: this.livePath, validated, migrations: this.opts.migrations, appVersion: this.opts.appVersion, clock: this.opts.clock });
+      migrateWorkingCopy(validated.tempDbPath, incomingKey, this.opts.migrations, this.opts.appVersion, this.opts.clock);
+      if (adopt) vault.stage(adopt.dk, adopt.wrap);
+      swapInDatabase({
+        livePath: this.livePath, incomingPath: validated.tempDbPath, incomingKey, incomingKeyId: incomingKey ? (adopt?.wrap.keyId ?? vault.recoveryWrap?.keyId ?? null) : null,
+        kind: 'RESTORE', clock: this.opts.clock,
+      });
+      swapped = true;
+      if (adopt) vault.promoteStaged(adopt.dk);
+    } catch (e) {
+      rmSync(validated.tempDbPath, { force: true });
+      if (adopt && !swapped) vault.discardStaged();
+      throw e;
     } finally {
       // Whatever happened, reopen whichever database is now live.
-      this.db = openDatabase({ path: this.livePath, fileMustExist: true });
-      seedSystemData(this.db, { newId: this.newId, now: this.opts.clock.now().toISOString(), appVersion: this.opts.appVersion });
-      this.services = this.buildServices(this.db);
-      this.ensureSearchIndex();
+      this.reopenAfterSwap();
     }
     this.services.deps.audit.append(SYSTEM_ACTOR, {
       action: 'backup.restored',
       entityType: 'backup',
-      metadata: { restoredByUserId: actor.userId, restoredByUsername: actor.username, filePath, dbSha256: validated.manifest.dbSha256, backupCreatedAt: validated.manifest.createdAt, safetyBackup: safety.filePath },
+      metadata: {
+        restoredByUserId: actor.userId, restoredByUsername: actor.username, filePath, dbSha256: validated.manifest.dbSha256, backupCreatedAt: validated.manifest.createdAt,
+        safetyBackup: safety.filePath, encrypted: this.isEncrypted,
+      },
     });
-    appendBackupHistory(this.opts.dataDir, { kind: 'RESTORE', status: 'SUCCEEDED', filePath, by: actor.username, at: this.opts.clock.now().toISOString(), safetyBackup: safety.filePath });
+    this.recordRestoreAnchor({ kind: 'RESTORE', filePath, by: actor.username, safetyBackup: safety.filePath });
     this.lastStartupIntegrity = runIntegrityChecks(this.db, this.services.deps.audit, this.opts.clock);
     return { manifest: validated.manifest, preRestoreBackup: safety.filePath };
+  }
+
+  private reopenAfterSwap(): void {
+    this.db = this.openLive();
+    seedSystemData(this.db, { newId: this.newId, now: this.opts.clock.now().toISOString(), appVersion: this.opts.appVersion });
+    this.syncKeyCopy();
+    this.services = this.buildServices(this.db);
+    this.ensureSearchIndex();
+    this.maintenance = null;
+  }
+
+  /** Keeps the database's copy of the recovery wrap equal to the key file (it is how a lost key file is rebuilt). */
+  private syncKeyCopy(): void {
+    const { vault } = this.opts;
+    if (!vault.recoveryWrap) return;
+    const row = this.db.prepare(`SELECT value_json FROM app_setting WHERE key = 'security.recovery_wrap'`).get() as { value_json: string } | undefined;
+    if (row?.value_json !== JSON.stringify(vault.recoveryWrap)) vault.syncToDatabase(this.db, this.opts.clock.now().toISOString());
+  }
+
+  /** The restored chain head becomes the new anchor baseline (anchors from before the restore describe another timeline). */
+  private recordRestoreAnchor(entry: Record<string, unknown>): void {
+    const head = this.db.prepare('SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1').get() as { seq: number; hash: string } | undefined;
+    appendBackupHistory(this.opts.dataDir, { ...entry, status: 'SUCCEEDED', at: this.opts.clock.now().toISOString(), auditSeq: head?.seq ?? 0, auditHeadHash: head?.hash ?? '0'.repeat(64) });
+  }
+
+  // ───────────────────────── encryption at rest ─────────────────────────
+
+  encryptionStatus(actor: Actor): EncryptionStatusDto {
+    requirePermission(this.services.deps, actor, ['settings.system', 'backup.create', 'backup.restore'], 'security.encryptionStatus');
+    const { vault } = this.opts;
+    const plainBackups = this.unencryptedBackupFiles();
+    return {
+      encrypted: this.isEncrypted,
+      keyCreatedAt: vault.recoveryWrap?.createdAt ?? null,
+      deviceProtection: vault.deviceKeys.isAvailable() ? vault.deviceKeys.kind : 'none',
+      unencryptedBackupFiles: plainBackups.length,
+    };
+  }
+
+  /** Files that still hold the company data unencrypted: plain backups and leftover pre-restore database copies. */
+  private unencryptedBackupFiles(): string[] {
+    const files = new Set<string>();
+    for (const r of this.db.prepare(`SELECT file_path FROM backup_record WHERE status = 'SUCCEEDED' AND is_encrypted = 0 AND file_path IS NOT NULL`).all() as { file_path: string }[]) {
+      if (r.file_path.endsWith(BACKUP_EXTENSION) && existsSync(r.file_path)) files.add(r.file_path);
+    }
+    if (existsSync(this.backupDir)) {
+      for (const f of readdirSync(this.backupDir)) {
+        if (!f.endsWith(BACKUP_EXTENSION)) continue;
+        const p = join(this.backupDir, f);
+        if (!files.has(p) && this.isPlainBackup(p)) files.add(p);
+      }
+    }
+    for (const f of readdirSync(this.opts.dataDir)) {
+      if (/^airdesk\.db\.pre-(restore|encryption)-[^.]+$/.test(f) && databaseFileKind(join(this.opts.dataDir, f)) === 'PLAIN') files.add(join(this.opts.dataDir, f));
+    }
+    return [...files];
+  }
+
+  private isPlainBackup(path: string): boolean {
+    // Only the small manifest at the start of the file is read, never the database part.
+    return quickBackupIsEncrypted(path) === false;
+  }
+
+  /**
+   * Turns an unencrypted (1.0.0-rc.1) installation into an encrypted one:
+   *  1. everyone is signed out and every other command is refused;
+   *  2. a consistent copy of the database is encrypted on the worker thread and
+   *     proven identical (schema, documents, trial balance, audit chain head,
+   *     full integrity check);
+   *  3. the new key is staged (key file + this user's protected copy), the
+   *     encrypted copy is swapped in crash-safely and the plain file deleted;
+   *  4. an encrypted verified backup is made immediately.
+   * Nothing financial changes; old unencrypted backup files are reported and
+   * can be deleted with purgeUnencryptedBackups().
+   */
+  async enableEncryption(actor: Actor, input: { password: string; passphrase: string; confirmation: string }): Promise<{ backupFilePath: string | null; unencryptedBackupFiles: number }> {
+    requirePermission(this.services.deps, actor, 'settings.system', 'security.enableEncryption');
+    await this.services.auth.confirmPassword(actor, input.password);
+    if (this.isEncrypted) throw new DomainError(ErrorCode.CONFLICT, 'Encryption is already enabled', { reason: 'ALREADY_ENCRYPTED' });
+    const passphrase = assertRecoveryPassphrase(input.passphrase, input.confirmation);
+    if (this.restoring || this.maintenance || this.automaticBackupRunning || this.backupsInFlight > 0) {
+      throw new DomainError(ErrorCode.MAINTENANCE, 'A backup or restore is running; try again in a minute');
+    }
+    const { vault } = this.opts;
+    const now = this.opts.clock.now().toISOString();
+    const { dk, wrap } = await vault.createKey(passphrase, now);
+    this.services.deps.audit.append(actorOf(actor), { action: 'security.encryption_started', entityType: 'system', metadata: { keyId: wrap.keyId } });
+    this.services.sessions.endAll('FORCED');
+    this.maintenance = 'ENCRYPT';
+    const workPath = join(this.opts.dataDir, `.encrypting-${this.newId()}.sqlite`);
+    let swapped = false;
+    try {
+      await snapshotDatabase(this.db, this.livePath, workPath);
+      await this.jobs.run({ type: 'encrypt-copy', path: workPath, keyHex: dk.toString('hex') });
+      vault.stage(dk, wrap);
+      this.db.close();
+      try {
+        swapInDatabase({ livePath: this.livePath, incomingPath: workPath, incomingKey: dk, incomingKeyId: wrap.keyId, kind: 'ENCRYPT', clock: this.opts.clock });
+        swapped = true;
+        vault.promoteStaged(dk);
+      } finally {
+        if (!swapped) vault.discardStaged();
+        this.reopenAfterSwap();
+      }
+    } catch (e) {
+      this.maintenance = null;
+      for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(`${workPath}${suffix}`, { force: true });
+      this.opts.logger.error('Enabling encryption failed; the database was left unchanged', { error: (e as Error).message });
+      throw e instanceof DomainError ? e : new DomainError(ErrorCode.INTEGRITY_FAILURE, `Encryption was not enabled: ${(e as Error).message}`);
+    }
+    this.services.deps.audit.append(SYSTEM_ACTOR, {
+      action: 'security.encryption_enabled', entityType: 'system',
+      metadata: { byUserId: actor.userId, byUsername: actor.username, keyId: wrap.keyId, deviceProtection: vault.deviceKeys.isAvailable() ? vault.deviceKeys.kind : 'none' },
+    });
+    let backupFilePath: string | null = null;
+    try {
+      backupFilePath = (await this.createBackup(null, 'MANUAL')).filePath;
+    } catch (e) {
+      this.opts.logger.warn('First encrypted backup failed', { error: (e as Error).message });
+    }
+    return { backupFilePath, unencryptedBackupFiles: this.unencryptedBackupFiles().length };
+  }
+
+  /** New recovery passphrase for the same key. Backups made before keep the passphrase they were made with. */
+  async changeRecoveryPassphrase(actor: Actor, input: { password: string; passphrase: string; confirmation: string }): Promise<{ backupFilePath: string | null }> {
+    requirePermission(this.services.deps, actor, 'settings.system', 'security.changeRecoveryPassphrase');
+    await this.services.auth.confirmPassword(actor, input.password);
+    if (!this.isEncrypted) throw new DomainError(ErrorCode.CONFLICT, 'Encryption is not enabled', { reason: 'NOT_ENCRYPTED' });
+    const passphrase = assertRecoveryPassphrase(input.passphrase, input.confirmation);
+    const { vault } = this.opts;
+    const wrap = await vault.rewrap(passphrase, this.opts.clock.now().toISOString());
+    this.db.transaction(() => {
+      vault.replaceWrap(wrap);
+      vault.syncToDatabase(this.db, this.opts.clock.now().toISOString());
+      this.services.deps.audit.append(actorOf(actor), { action: 'security.recovery_passphrase_changed', entityType: 'system', metadata: { keyId: wrap.keyId } });
+    })();
+    let backupFilePath: string | null = null;
+    try {
+      backupFilePath = (await this.createBackup(null, 'MANUAL')).filePath;
+    } catch (e) {
+      this.opts.logger.warn('Backup after passphrase change failed', { error: (e as Error).message });
+    }
+    return { backupFilePath };
+  }
+
+  /** Deletes backup files and leftover database copies that are not encrypted (only once the installation is encrypted). */
+  async purgeUnencryptedBackups(actor: Actor, password: string): Promise<{ removed: number }> {
+    requirePermission(this.services.deps, actor, 'settings.system', 'security.purgeUnencryptedBackups');
+    await this.services.auth.confirmPassword(actor, password);
+    if (!this.isEncrypted) throw new DomainError(ErrorCode.CONFLICT, 'Enable encryption first', { reason: 'NOT_ENCRYPTED' });
+    const removed: string[] = [];
+    for (const f of this.unencryptedBackupFiles()) {
+      try {
+        rmSync(f, { force: true });
+        removed.push(f);
+      } catch (e) {
+        this.opts.logger.warn('Could not delete an unencrypted backup', { filePath: f, error: (e as Error).message });
+      }
+    }
+    this.services.deps.audit.append(actorOf(actor), { action: 'backup.unencrypted_purged', entityType: 'backup', metadata: { removed } });
+    return { removed: removed.length };
+  }
+
+  /** Public header of a backup (no key needed): shown before asking for a passphrase. */
+  async inspectBackup(actor: Actor, filePath: string): Promise<BackupHeader> {
+    requirePermission(this.services.deps, actor, 'backup.restore', 'backup.inspect');
+    return this.jobs.run<BackupHeader>({ type: 'inspect', filePath });
   }
 
   get appVersion(): string {

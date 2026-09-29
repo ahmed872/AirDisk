@@ -3,11 +3,18 @@ import type { AuditLog } from '../audit/audit-log';
 import type { Db } from '../db/driver';
 import type { Clock } from '../util/clock';
 
+/** An audit-chain head recorded outside the database (backup history). */
+export interface AuditAnchor {
+  seq: number;
+  hash: string;
+  at: string | null;
+}
+
 /**
  * Invariant checks shared by tests and production (Phase 0 §04-10, §09-5).
  * Run at startup (quick), before backups, after migrations/restore, on demand.
  */
-export function runIntegrityChecks(db: Db, audit: AuditLog, clock: Clock, opts: { quick?: boolean } = {}): IntegrityReportDto {
+export function runIntegrityChecks(db: Db, audit: AuditLog, clock: Clock, opts: { quick?: boolean; anchors?: readonly AuditAnchor[] } = {}): IntegrityReportDto {
   const checks: IntegrityCheckDto[] = [];
   const add = (id: string, ok: boolean, details?: string) => checks.push(details ? { id, ok, details } : { id, ok });
   const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
@@ -62,6 +69,19 @@ export function runIntegrityChecks(db: Db, audit: AuditLog, clock: Clock, opts: 
 
   const chain = audit.verifyChain();
   add('INV-9.audit_chain', chain.ok, chain.ok ? `${chain.checked} records verified` : `chain broken at record ${chain.brokenAtSeq}`);
+
+  // A hash chain alone cannot see records cut off at its end: SQLite's AUTOINCREMENT
+  // counter still remembers the highest sequence number ever used.
+  const maxSeq = (db.prepare('SELECT COALESCE(MAX(seq), 0) AS n FROM audit_log').get() as { n: number }).n;
+  const used = (db.prepare(`SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'audit_log'), 0) AS n`).get() as { n: number }).n;
+  add('INV-9.audit_tail', used === maxSeq, used === maxSeq ? undefined : `records ${maxSeq + 1}–${used} are missing from the end of the audit log`);
+
+  if (opts.anchors && opts.anchors.length) {
+    const at = db.prepare('SELECT hash FROM audit_log WHERE seq = ?');
+    const broken = opts.anchors.filter((a) => (at.get(a.seq) as { hash: string } | undefined)?.hash !== a.hash);
+    add('INV-9.audit_anchors', broken.length === 0,
+      broken.length ? `audit log no longer matches ${broken.length} recorded checkpoint(s), first at record ${broken[0]!.seq}` : `${opts.anchors.length} checkpoints match`);
+  }
 
   return { ok: checks.every((c) => c.ok), ranAt: clock.now().toISOString(), checks };
 }
