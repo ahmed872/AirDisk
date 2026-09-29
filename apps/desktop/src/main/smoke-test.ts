@@ -58,6 +58,9 @@ export async function runSmokeTest(resultPath: string, appVersion: string, opts:
       record('supplier persisted', (suppliers?.total ?? 0) >= 1);
       const airlines = dataOf(await call('airlines.list', { query: 'ZZ' }, s)) as { total: number } | undefined;
       record('airline persisted', (airlines?.total ?? 0) >= 1);
+      record('ticket record + balances persisted', await recordPersisted(call, s));
+      const about = dataOf(await call('system.about', {}, s)) as { schemaVersion: number; latestSchemaVersion: number } | undefined;
+      record('schema up to date', !!about && about.schemaVersion === about.latestSchemaVersion, about ? `schema v${about.schemaVersion}` : undefined);
     } else {
       if (!(await status()).setupRequired) throw new Error('Refusing to run setup: this data directory is already set up');
       const setup = await call('system.setup', {
@@ -98,6 +101,18 @@ export async function runSmokeTest(resultPath: string, appVersion: string, opts:
       record('create supplier', sup.ok, sup.ok ? undefined : JSON.stringify(sup.error));
       const air = await call('airlines.create', { airline: { nameEn: 'Smoke Air', iataCode: 'ZZ' } }, sessionId);
       record('create airline', air.ok, air.ok ? undefined : JSON.stringify(air.error));
+      // Ticket-office operations: record an externally issued ticket, take a payment, pay the supplier part.
+      const ops = await recordTicket(call, sessionId, {
+        customerId: (dataOf(c) as { id: string } | undefined)?.id, supplierId: (dataOf(sup) as { id: string } | undefined)?.id,
+        airlineId: (dataOf(air) as { id: string } | undefined)?.id, today: b.svc.company.today(),
+      });
+      for (const [step, ok, detail] of ops) record(step, ok, detail);
+      if (phase === 'full') {
+        const bk = await call('backup.create', {}, sessionId);
+        const rs = bk.ok ? await call('backup.restore', { filePath: (bk.data as { filePath: string }).filePath, password: PASSWORD, confirmation: 'RESTORE' }, sessionId) : bk;
+        sessionId = await login();
+        record('backup → restore keeps ticket record + balances', rs.ok && (await recordPersisted(call, sessionId)), rs.ok ? undefined : JSON.stringify(rs.error));
+      }
       const agent = await call('users.create', { username: 'smokeagent', displayName: 'Agent', password: 'temporary pass 12345', roleCodes: ['SALES_AGENT'] }, sessionId);
       record('create sales agent', agent.ok);
       const agentSession = await login('smokeagent', 'temporary pass 12345');
@@ -111,6 +126,7 @@ export async function runSmokeTest(resultPath: string, appVersion: string, opts:
         const s2 = await login();
         const kept = dataOf(await call('customers.list', { query: 'Smoke Customer' }, s2)) as { total: number } | undefined;
         record('data persists after restart', !!s2 && (kept?.total ?? 0) === 1);
+        record('ticket record persists after restart', await recordPersisted(call, s2));
       }
     }
     const report = runIntegrityChecks(b.internals.db, b.svc.deps.audit, { now: () => new Date() });
@@ -124,4 +140,45 @@ export async function runSmokeTest(resultPath: string, appVersion: string, opts:
   const ok = steps.length > 0 && steps.every((s) => s.ok);
   writeFileSync(resultPath, JSON.stringify({ ok, phase, appVersion, electron: process.versions.electron, node: process.versions.node, platform: process.platform, steps }, null, 2));
   return ok ? 0 : 1;
+}
+
+type Call = (command: string, payload: unknown, sessionId?: string | null) => Promise<{ ok: boolean; error?: { code: string } }>;
+const PNR = 'SMK123';
+interface RecordShape { id: string; rowVersion: number; status: string; passengers: { id: string }[]; customer: { chargedMinor: number; paidMinor: number; balanceMinor: number }[] }
+
+/** Records a ticket issued outside AirDesk (PNR + ticket number) and a partial customer payment. */
+async function recordTicket(call: Call, s: string | null, ids: { customerId?: string; supplierId?: string; airlineId?: string; today: string }): Promise<[string, boolean, string?][]> {
+  const out: [string, boolean, string?][] = [];
+  const step = async (name: string, command: string, payload: unknown): Promise<RecordShape | null> => {
+    const r = await call(command, payload, s);
+    out.push([name, r.ok, r.ok ? undefined : JSON.stringify(r.error)]);
+    return r.ok ? (dataOf(r) as RecordShape) : null;
+  };
+  if (!ids.customerId || !ids.supplierId || !ids.airlineId) return [['ticket record prerequisites', false]];
+  const d = new Date(`${ids.today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 30);
+  const dep = d.toISOString().slice(0, 10);
+  let r = await step('ticket record created', 'bookings.create', { customerId: ids.customerId, pnr: PNR, supplierId: ids.supplierId });
+  if (r) r = await step('passenger added', 'bookings.savePassenger', { bookingId: r.id, passenger: { givenName: 'SMOKE', surname: 'TRAVELLER' } });
+  if (r) r = await step('flight added', 'bookings.saveSegment', { bookingId: r.id, segment: { airlineId: ids.airlineId, flightNumber: '101', origin: 'CAI', destination: 'JED', departureDate: dep, departureTime: '10:00', arrivalDate: dep, arrivalTime: '12:30' } });
+  if (r) r = await step('price + cost entered', 'bookings.savePriceItem', { bookingId: r.id, item: { passengerId: r.passengers[0]!.id, supplierId: ids.supplierId, fareMinor: 1_000_000, costMinor: 950_000, costCurrency: 'EGP', ticketNumber: '9991234567890' } });
+  if (r) r = await step('confirmed ticketed (sale + purchase posted)', 'bookings.issue', { id: r.id, rowVersion: r.rowVersion });
+  if (!r) return out;
+  const accounts = dataOf(await call('moneyAccounts.list', {}, s)) as { id: string; currencyCode: string }[] | undefined;
+  const cash = accounts?.find((a) => a.currencyCode === 'EGP');
+  const pay = await call('payments.receive', { partyId: ids.customerId, currency: 'EGP', amountMinor: 400_000, moneyAccountId: cash?.id, paymentMethod: 'CASH', allocations: [{ bookingId: r.id, amountMinor: 400_000 }] }, s);
+  out.push(['customer payment received', pay.ok, pay.ok ? undefined : JSON.stringify(pay.error)]);
+  const after = dataOf(await call('bookings.get', { id: r.id }, s)) as RecordShape | undefined;
+  const pos = after?.customer[0];
+  out.push(['total / paid / remaining', !!pos && pos.chargedMinor === 1_000_000 && pos.paidMinor === 400_000 && pos.balanceMinor === 600_000, pos ? `${pos.chargedMinor}/${pos.paidMinor}/${pos.balanceMinor}` : undefined]);
+  return out;
+}
+
+async function recordPersisted(call: Call, s: string | null): Promise<boolean> {
+  const list = dataOf(await call('bookings.list', { query: PNR, status: 'ALL' }, s)) as { items: { id: string }[] } | undefined;
+  const id = list?.items[0]?.id;
+  if (!id) return false;
+  const r = dataOf(await call('bookings.get', { id }, s)) as RecordShape | undefined;
+  const pos = r?.customer[0];
+  return r?.status === 'ISSUED' && !!pos && pos.chargedMinor === 1_000_000 && pos.paidMinor === 400_000 && pos.balanceMinor === 600_000;
 }

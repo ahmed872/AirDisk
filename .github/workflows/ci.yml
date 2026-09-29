@@ -81,7 +81,7 @@ jobs:
           Get-Process AirDesk -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 3
           Get-ChildItem "$env:ProgramData\AirDesk\data"
-      - name: Packaged smoke test (native SQLite + Argon2, setup, login, master data, post, backup, restore, restart)
+      - name: Packaged smoke test (native SQLite + Argon2, setup, login, master data, ticket record + payment, backup, restore, restart)
         shell: pwsh
         run: |
           $out = "$env:RUNNER_TEMP\smoke.json"
