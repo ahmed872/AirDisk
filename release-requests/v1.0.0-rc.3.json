@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0-rc.3",
+  "channel": "pre-release",
+  "signed": false,
+  "reason": "Owner request: publish rc.3 (ticket files on records, ticket-list filters) as an UNSIGNED pre-release for pilot use."
+}
