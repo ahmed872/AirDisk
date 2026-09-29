@@ -66,6 +66,24 @@ jobs:
           $installer = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1
           Start-Process -FilePath $installer.FullName -ArgumentList '/S', '/allusers' -Wait
           if (-not (Test-Path "$env:ProgramFiles\AirDesk\AirDesk.exe")) { throw 'AirDesk.exe not installed' }
+      - name: Version information (EXE file properties, installer, Apps & Features entry)
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          $exe = (Get-Item "$env:ProgramFiles\AirDesk\AirDesk.exe").VersionInfo
+          $exe | Format-List ProductName, ProductVersion, FileVersion, FileDescription, CompanyName, LegalCopyright
+          if ($exe.ProductName -ne 'AirDesk') { throw "EXE ProductName is '$($exe.ProductName)'" }
+          # Windows resources hold numeric versions (1.0.0.x); the full semver is in the Apps & Features entry.
+          $numeric = $version -replace '-.*$', ''
+          if (-not $exe.ProductVersion.StartsWith($numeric)) { throw "EXE ProductVersion '$($exe.ProductVersion)' does not match $version" }
+          $installer = (Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1).VersionInfo
+          $installer | Format-List ProductName, ProductVersion, FileVersion
+          if ($installer.ProductName -ne 'AirDesk') { throw 'Installer ProductName is not AirDesk' }
+          $entry = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like 'AirDesk*' } | Select-Object -First 1
+          if (-not $entry) { throw 'No Apps & Features entry for AirDesk' }
+          $entry | Format-List DisplayName, DisplayVersion, Publisher, InstallLocation
+          if ($entry.DisplayVersion -ne $version) { throw "Apps & Features version '$($entry.DisplayVersion)' <> $version" }
       - name: Packaged launch initialises the real database (%ProgramData%\AirDesk\data)
         shell: pwsh
         run: |

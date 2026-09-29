@@ -27,9 +27,11 @@ win:
     - target: nsis
       arch: [x64]
   artifactName: AirDesk-Setup-${version}-x64.${ext}
-  # Code signing (Phase 10; certificate decision pending) is configured only in
-  # the protected release workflow. Unsigned builds are for testing.
-  signAndEditExecutable: false
+  # Writes product name, version and copyright into AirDesk.exe (Windows file
+  # properties). Without a certificate (CSC_LINK) signing itself is skipped:
+  # code signing is configured only in the protected release workflow.
+  signAndEditExecutable: true
+  legalTrademarks: AirDesk
 nsis:
   oneClick: false
   perMachine: true
