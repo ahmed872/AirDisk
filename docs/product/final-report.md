@@ -153,7 +153,7 @@ Both are listed in K and N.
 
 ## H. Windows (CI `windows-latest`, Windows 10.0.26100, Electron 44.4.5)
 
-Run 16 (`6482bbe`) and run 17 (`217e174`): **all steps passed.** Run 18 (`5a9fd18`) results are in the addendum. The steps:
+Runs 16 (`6482bbe`), 17 (`217e174`) and 18 (`5a9fd18`, final code): **all steps passed.** The steps:
 1. **Tests:** unit and integration tests on Windows.
 2. **Build:** NSIS installer `AirDesk-Setup-1.0.0-rc.1-x64.exe` (artifact ≈122 MB).
 3. **Install:** silent per-machine install.
@@ -304,4 +304,6 @@ Nothing in the core workflow or the financial engine is known to be broken. All 
 
 ## Addendum — CI for the final code commit
 
-Filled in after run 18 completes.
+Run 18 (`5a9fd18`, the last code commit; later commits are documentation only):
+- **Linux job 109214847323: success.** Typecheck, lint, tests with coverage, build, Electron smoke, and all three E2E suites passed.
+- **Windows job 109215155489: success.** All 14 steps passed: tests, NSIS build, silent install, version information, packaged launch, packaged smoke (schema v6), real-directory seed, uninstall keeps data, reinstall and verify.
