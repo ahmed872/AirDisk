@@ -11,7 +11,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "dist:win": "electron-vite build && electron-builder --win nsis --x64 --publish never"
+    "dist:win": "node scripts/signing.mjs && electron-vite build && electron-builder --win nsis --x64 --publish never",
+    "dist:win:release": "node scripts/dist-release.mjs"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.2.1",

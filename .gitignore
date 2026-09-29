@@ -8,3 +8,9 @@ coverage/
 *.db-shm
 *.adbk
 .DS_Store
+
+# Code-signing material must never be committed (release secrets only).
+*.pfx
+*.p12
+*.cer
+*.key.pem

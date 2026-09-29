@@ -44,7 +44,7 @@ export default tseslint.config(
   },
   {
     // E2E script: runs in Node, and its page.evaluate() callbacks run in the renderer.
-    files: ['apps/desktop/e2e/**/*.mjs'],
+    files: ['apps/desktop/e2e/**/*.mjs', 'apps/desktop/scripts/**/*.mjs'],
     languageOptions: { globals: { process: 'readonly', console: 'readonly', document: 'readonly', window: 'readonly' } },
   },
   {

@@ -17,6 +17,7 @@
     "dev": "pnpm --filter @airdesk/desktop dev",
     "build": "pnpm --filter @airdesk/desktop build",
     "dist:win": "pnpm --filter @airdesk/desktop dist:win",
+    "dist:win:release": "pnpm --filter @airdesk/desktop dist:win:release",
     "e2e": "pnpm build && node apps/desktop/e2e/foundation.e2e.mjs && node apps/desktop/e2e/phase2.e2e.mjs && node apps/desktop/e2e/operations.e2e.mjs"
   },
   "devDependencies": {

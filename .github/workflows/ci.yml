@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -58,8 +59,45 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Unit + integration tests on Windows
         run: pnpm test
-      - name: Build NSIS installer
+      - name: Build NSIS installer (development build, unsigned)
         run: pnpm dist:win
+      - name: Signing gate — a release build without credentials fails clearly
+        shell: pwsh
+        run: |
+          $env:AIRDESK_REQUIRE_SIGNING = '1'
+          $msg = node apps/desktop/scripts/signing.mjs 2>&1
+          if ($LASTEXITCODE -eq 0) { throw 'The signing gate accepted a release build without credentials' }
+          if ("$msg" -notmatch 'no signing credentials') { throw "Unclear signing error: $msg" }
+          Write-Host "Refused as expected: $msg"
+      - name: Upgrade path — build and install 1.0.0-rc.1, create unencrypted data
+        shell: pwsh
+        run: |
+          git fetch --depth=1 origin 59c3634ef0c707a1825646fb8e39336dda34f909
+          git worktree add "$env:RUNNER_TEMP\rc1" 59c3634ef0c707a1825646fb8e39336dda34f909
+          Push-Location "$env:RUNNER_TEMP\rc1"
+          pnpm install --frozen-lockfile
+          pnpm dist:win
+          $old = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1
+          Start-Process -FilePath $old.FullName -ArgumentList '/S', '/allusers' -Wait
+          Pop-Location
+          $out = "$env:RUNNER_TEMP\rc1-seed.json"
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out", '--smoke-phase=seed', "--smoke-data-dir=$env:ProgramData\AirDesk\data" -Wait
+          Get-Content $out
+          if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'rc.1 seed failed' }
+      - name: Upgrade path — install the new version over rc.1, data opens, encryption enabled in place
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', '/allusers' -Wait
+          $out = "$env:RUNNER_TEMP\upgrade.json"
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out", '--smoke-phase=upgrade', "--smoke-data-dir=$env:ProgramData\AirDesk\data" -Wait
+          Get-Content $out
+          if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Upgrade from rc.1 failed' }
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
+          Start-Sleep -Seconds 5
+          # Back to a clean machine for the fresh-install checks below.
+          Remove-Item -Recurse -Force "$env:ProgramData\AirDesk" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$env:APPDATA\AirDesk" -ErrorAction SilentlyContinue
       - name: Silent install
         shell: pwsh
         run: |
@@ -84,21 +122,28 @@ jobs:
           if (-not $entry) { throw 'No Apps & Features entry for AirDesk' }
           $entry | Format-List DisplayName, DisplayVersion, Publisher, InstallLocation
           if ($entry.DisplayVersion -ne $version) { throw "Apps & Features version '$($entry.DisplayVersion)' <> $version" }
-      - name: Packaged launch initialises the real database (%ProgramData%\AirDesk\data)
+      - name: Packaged launch on a clean PC waits for setup and writes no unencrypted data
         shell: pwsh
         run: |
-          $db = "$env:ProgramData\AirDesk\data\airdesk.db"
+          $data = "$env:ProgramData\AirDesk\data"
+          $db = "$data\airdesk.db"
           if (Test-Path $db) { throw 'Runner is not clean: database already exists' }
           $p = Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -PassThru
-          $deadline = (Get-Date).AddSeconds(60)
-          while (-not (Test-Path $db) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
-          Start-Sleep -Seconds 3
+          $deadline = (Get-Date).AddSeconds(30)
+          while (-not (Test-Path "$data\logs") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+          Start-Sleep -Seconds 5
           if ($p.HasExited) { throw "AirDesk exited early with code $($p.ExitCode)" }
-          if (-not (Test-Path $db)) { throw 'Database was not created by the packaged app' }
+          if (Test-Path $db) { throw 'A database was created before first-run setup (it must be created encrypted by setup)' }
           Stop-Process -Id $p.Id -Force
           Get-Process AirDesk -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 3
-          Get-ChildItem "$env:ProgramData\AirDesk\data"
+          Get-ChildItem $data
+      - name: ProgramData permissions (standard Windows users can run AirDesk)
+        shell: pwsh
+        run: |
+          $acl = icacls "$env:ProgramData\AirDesk"
+          $acl
+          if (-not ($acl -match 'BUILTIN\\Users:.*\(M\)|BUILTIN\\Users:\(OI\)\(CI\)\(M\)')) { throw 'Users do not have modify rights on %ProgramData%\AirDesk' }
       - name: Packaged smoke test (native SQLite + Argon2, setup, login, master data, ticket record + payment, backup, restore, restart)
         shell: pwsh
         run: |
@@ -110,9 +155,11 @@ jobs:
         shell: pwsh
         run: |
           $out = "$env:RUNNER_TEMP\seed.json"
-          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out", '--smoke-phase=seed', "--smoke-data-dir=$env:ProgramData\AirDesk\data" -Wait
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\offsite" | Out-Null
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out", '--smoke-phase=seed', "--smoke-data-dir=$env:ProgramData\AirDesk\data", "--smoke-backup-out=$env:RUNNER_TEMP\offsite" -Wait
           Get-Content $out
           if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Seed failed' }
+          if (-not (Test-Path "$env:APPDATA\AirDesk\device-keys\*.key")) { throw 'No DPAPI-protected device key was saved' }
       - name: Uninstall keeps company data
         shell: pwsh
         run: |
@@ -129,6 +176,21 @@ jobs:
           Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out", '--smoke-phase=verify', "--smoke-data-dir=$env:ProgramData\AirDesk\data" -Wait
           Get-Content $out
           if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Data verification after reinstall failed' }
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
+      - name: Clean-PC disaster recovery (no data, no device key; encrypted off-site backup + recovery passphrase)
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 5
+          Remove-Item -Recurse -Force "$env:ProgramData\AirDesk" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$env:APPDATA\AirDesk" -ErrorAction SilentlyContinue
+          $installer = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', '/allusers' -Wait
+          $backup = Get-ChildItem "$env:RUNNER_TEMP\offsite\*.adbk" | Select-Object -First 1
+          if (-not $backup) { throw 'No off-site backup was written' }
+          $out = "$env:RUNNER_TEMP\recover.json"
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out", '--smoke-phase=recover', "--smoke-data-dir=$env:ProgramData\AirDesk\data", "--smoke-backup=$($backup.FullName)" -Wait
+          Get-Content $out
+          if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Clean-PC recovery failed' }
           Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
       - uses: actions/upload-artifact@v4
         with:

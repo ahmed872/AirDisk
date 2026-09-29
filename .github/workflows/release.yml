@@ -1,0 +1,71 @@
+name: Release (signed Windows installer)
+
+# Produces a SIGNED installer. Runs only for version tags or a manual dispatch,
+# in the protected `release` environment (required reviewers; secrets are
+# scoped to it and never reach pull requests or ci.yml).
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    uses: ./.github/workflows/ci.yml
+
+  signed-installer:
+    name: Build, sign, verify and smoke-test the release
+    needs: gates
+    runs-on: windows-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build and sign (fails if no signing credentials)
+        env:
+          AIRDESK_REQUIRE_SIGNING: '1'
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AIRDESK_AZURE_SIGNING_ENDPOINT: ${{ vars.AIRDESK_AZURE_SIGNING_ENDPOINT }}
+          AIRDESK_AZURE_SIGNING_ACCOUNT: ${{ vars.AIRDESK_AZURE_SIGNING_ACCOUNT }}
+          AIRDESK_AZURE_CERT_PROFILE: ${{ vars.AIRDESK_AZURE_CERT_PROFILE }}
+          AIRDESK_PUBLISHER_NAME: ${{ vars.AIRDESK_PUBLISHER_NAME }}
+        run: pnpm dist:win:release
+      - name: Verify Authenticode signatures (installer + AirDesk.exe, timestamped)
+        shell: pwsh
+        env:
+          AIRDESK_SIGNER_SUBJECT: ${{ vars.AIRDESK_SIGNER_SUBJECT }}
+        run: pwsh apps/desktop/scripts/verify-signature.ps1 -Dist apps/desktop/dist
+      - name: Silent install + packaged smoke test of the SIGNED build
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', '/allusers' -Wait
+          $out = "$env:RUNNER_TEMP\smoke.json"
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\AirDesk.exe" -ArgumentList "--smoke-test=$out" -Wait
+          Get-Content $out
+          if (-not (Get-Content $out | ConvertFrom-Json).ok) { throw 'Smoke test of the signed build failed' }
+          Start-Process -FilePath "$env:ProgramFiles\AirDesk\Uninstall AirDesk.exe" -ArgumentList '/S', '/allusers' -Wait
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem apps/desktop/dist/AirDesk-Setup-*-x64.exe | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content apps/desktop/dist/SHA256SUMS.txt
+          Get-Content apps/desktop/dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AirDesk-Setup-signed
+          path: |
+            apps/desktop/dist/AirDesk-Setup-*-x64.exe
+            apps/desktop/dist/SHA256SUMS.txt
+          retention-days: 90

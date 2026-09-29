@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AppLauncher, databaseFileKind, createMemoryLogger, runIntegrityChecks, type AppBackend, type DeviceKeyStore } from '@airdesk/backend';
@@ -18,7 +18,7 @@ import { AppLauncher, databaseFileKind, createMemoryLogger, runIntegrityChecks, 
  * `seed` only does what the public first-run setup screen allows anyway, and
  * refuses to touch a directory that is already set up.
  */
-export type SmokePhase = 'full' | 'seed' | 'verify' | 'recover';
+export type SmokePhase = 'full' | 'seed' | 'verify' | 'recover' | 'upgrade';
 const USER = 'operator';
 const PASSWORD = 'smoke test password 123';
 /** Test-only recovery passphrase for the smoke data (never used for real data). */
@@ -58,9 +58,20 @@ export async function runSmokeTest(
       const needNew = l.launchState === 'NEW';
       if (!needNew) throw new Error('Refusing to run setup: this data directory already holds company data');
     } else if (l.launchState === 'LOCKED') {
-      // verify on a machine without OS key protection: the passphrase opens it.
+      // On Windows the same Windows user must get in through DPAPI, without the passphrase.
+      record('opened without passphrase through the OS-protected key', process.platform !== 'win32', `${l.launchState} ${l.lockReason ?? ''}`);
       const u = await lcall('vault.unlock', { passphrase: SMOKE_RECOVERY });
       record('unlock with recovery passphrase', u.ok, u.ok ? undefined : JSON.stringify(u.error));
+    }
+    if (phase === 'upgrade') {
+      // A 1.0.0-rc.1 (unencrypted) installation upgraded in place: it opens as before, then the owner enables encryption.
+      const b0 = l.backend;
+      record('rc.1 data opens after the upgrade (not yet encrypted)', !!b0 && !b0.isEncrypted);
+      const s0 = (await lcall('auth.login', { username: USER, password: PASSWORD })).session;
+      const sid = s0 && 'set' in s0 ? s0.set : null;
+      record('rc.1 records intact before encryption', await recordPersisted(lcall, sid));
+      const en = await lcall('security.enableEncryption', { password: PASSWORD, passphrase: SMOKE_RECOVERY, confirmation: SMOKE_RECOVERY }, sid);
+      record('enable encryption on upgraded data', en.ok, en.ok ? JSON.stringify(en.data) : JSON.stringify(en.error));
     }
     if (phase === 'full' || phase === 'seed') {
       const setup = await lcall('system.setup', {
@@ -82,7 +93,7 @@ export async function runSmokeTest(
     };
     const status = async () => dataOf(await call('system.status', {})) as { setupRequired: boolean };
 
-    if (phase === 'verify' || phase === 'recover') {
+    if (phase === 'verify' || phase === 'recover' || phase === 'upgrade') {
       record('setup not offered again', !(await status()).setupRequired);
       const s = await login();
       record('login', !!s);
@@ -173,6 +184,8 @@ export async function runSmokeTest(
     }
     const report = runIntegrityChecks(b.internals.db, b.svc.deps.audit, { now: () => new Date() });
     record('integrity', report.ok, report.checks.filter((x) => !x.ok).map((x) => x.id).join(',') || undefined);
+    const leaks = plaintextLeaks(dataDir, ['Smoke Customer', 'Smoke Supplier', 'SMK123', '9991234567890']);
+    record('no customer/supplier/ticket data readable in the data folder (database, WAL, backups, key file)', leaks.length === 0, leaks.join('; ') || undefined);
   } catch (e) {
     record('exception', false, (e as Error).stack ?? String(e));
   } finally {
@@ -182,6 +195,23 @@ export async function runSmokeTest(
   const ok = steps.length > 0 && steps.every((s) => s.ok);
   writeFileSync(resultPath, JSON.stringify({ ok, phase, appVersion, electron: process.versions.electron, node: process.versions.node, platform: process.platform, steps }, null, 2));
   return ok ? 0 : 1;
+}
+
+/** Files in the data folder (recursively) that contain any marker as plain UTF-8. */
+function plaintextLeaks(dir: string, markers: string[]): string[] {
+  const hits: string[] = [];
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name !== 'backup-history.jsonl' && !e.name.endsWith('.log')) {
+        const buf = readFileSync(p);
+        for (const m of markers) if (buf.includes(Buffer.from(m, 'utf8'))) hits.push(`${e.name}: ${m}`);
+      }
+    }
+  };
+  walk(dir);
+  return hits;
 }
 
 type Call = (command: string, payload: unknown, sessionId?: string | null) => Promise<{ ok: boolean; error?: { code: string } }>;
