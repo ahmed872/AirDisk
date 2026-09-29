@@ -52,24 +52,36 @@ Every interactive operation and report is under 0.6 s (worst single run: dashboa
 
 ## Backup timing (measured, not hidden)
 
+### 1.0.0-rc.2: encrypted database, work on the worker thread
+
+Same 140 MB dataset, encrypted in place with **Enable encryption**, then measured through the launcher with the bundled backup worker (as in the desktop app). "Main-thread lag" is the longest time the main event loop could not run a 5 ms timer, i.e. how long the window would have been unresponsive.
+
+| Operation | Duration | Longest main-thread lag | Where the work runs |
+|---|---:|---:|---|
+| Verified encrypted backup (snapshot, quick check, package, re-read, full validation) | 10.5 s | **8 ms** | worker thread (main: checkpoint + asynchronous file copy) |
+| Full integrity check | 4.6 s | **3 ms** | worker thread, read-only connection |
+| Enable encryption on 1.0.0-rc.1 data (one-time; everyone signed out) | 22.1 s | 2.2 s | copy + encrypt + verify on the worker. The reopen after the swap (seed, search-index check) is on the main thread while no one can work. |
+| Encrypted backup file size | 135.6 MB | | encrypted pages do not compress; plain rc.1 backups of the same data were 24 MB |
+
+Regression guard in the normal suite (`backup-worker.test.ts`, a 60,000-event audit log): during a 2.6 s verified backup the main thread was **busy 17 ms**, and during a 0.96 s integrity check 8 ms. The same integrity check run in-process keeps it busy 797 ms. The test fails if work moves back to the main thread.
+
+The only main-thread step left in a backup is the WAL checkpoint before the copy. It is bounded by SQLite's auto-checkpoint (≤ ~1,000 pages, about 4 MB) in normal use.
+
+### 1.0.0-rc.1 figures (plain database, verification on the main thread), kept for comparison
+
 | Where | 140 MB database, full verified backup |
 |---|---:|
-| Performance-test worker (after building the dataset in the same process) | 28.3 s |
-| A normal AppBackend process opened on the same database (5 consecutive backups) | 13–15 s each |
-| Raw SQLite online snapshot alone, standalone process | ~0.4 s |
+| Performance-test process | 25–28 s |
+| A normal AppBackend process opened on the same database | 13–15 s each, of which ~5 s blocked the main thread |
 
-A verified backup = snapshot → `quick_check` of the snapshot → compression (worker thread) → re-read and SHA-256 → decompression (worker thread) → full validation (`integrity_check`, foreign keys, audit chain, trial balance). The pre-release audit replaced the snapshot's full `integrity_check` by `quick_check` because the final validation runs the full check again on the same bytes. About **5 s of the remaining time is synchronous SQLite verification on the main process**, during which the window does not respond. For a small office database (under 20 MB) the whole backup takes 1–2 s.
-
-**Why automatic backups do not interrupt work:** they run only at start-up (5 s after the window opens, before anyone works) or after 5 minutes without keyboard/mouse activity (checked every 10 minutes). A manual *Back up now* on a very large database keeps the application busy for several seconds (other commands wait); the page shows a "Working… do not close AirDesk" notice while it runs. Moving the verification to a worker thread is listed as *should fix before general sale* in the final report.
-
-The earlier observation that "the first backup of a process spends ~13 s in the snapshot's first step" was re-investigated: it reproduces only inside the performance-test worker that has just written the 140 MB dataset (page cache / WAL state of that process), not in a freshly opened application process, where every backup takes the same 13–15 s.
+**Automatic backups** still run only at start-up (5 s after the window opens) or after 5 minutes without keyboard/mouse activity (checked every 10 minutes). A manual *Back up now* no longer blocks the window. The page shows a "Working…" notice until the verified file exists.
 
 ## Bottlenecks found and fixed
 
 1. **Opening a ticket record: 120 ms → 3–5 ms.** It read `v_booking_financials`, a view that groups the whole journal before filtering. It now uses an indexed per-record query with identical figures.
 2. **Missing indexes (migration 4):** tickets by issue date (dashboard), document lines by passenger (removing draft passengers), cancellations by request date; cancellation date filters rewritten as index-friendly ranges.
 3. **Supplier volume report: 2.9 s → 0.15 s.** A `(doc_type, reason_code)` index added in migration 5 made SQLite choose a low-selectivity plan for per-supplier queries; migration 6 removes it (caught by this test).
-4. **Backups:** the online snapshot copies 1,000 pages per step instead of 100, compression/decompression run on a worker thread, and the snapshot check is `quick_check` (the full check runs once, in the final validation). See *Backup timing* above.
+4. **Backups:** rc.2 takes the snapshot by checkpoint + asynchronous file copy (also works for encrypted databases, where the SQLite backup API is refused), and runs packaging, verification, re-encryption and the full integrity check on a worker thread. See *Backup timing* above.
 
 ## Not a bottleneck, by design
 
