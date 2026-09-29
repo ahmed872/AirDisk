@@ -1,4 +1,4 @@
-# AirDesk — Architecture (as built, 1.0.0-rc.1)
+# AirDesk — Architecture (as built, 1.0.0-rc.2)
 
 The design decisions are in [Phase 0 §07](../phase-0/07-architecture.md); this page describes what the product actually is now.
 
@@ -70,3 +70,11 @@ AirDesk is a **record-management** system for ticket offices. Ticket records sto
 ## 6. Multi-PC
 
 Not built. The backend is transport-agnostic so a LAN primary/client mode can reuse the same dispatcher ([deployment-architecture](../phase-1/deployment-architecture.md)). Sharing the database file over the network is refused by design.
+
+
+## Encryption, start-up and background work (1.0.0-rc.2)
+
+- **AppLauncher** (`packages/backend/src/app/launcher.ts`) sits in front of AppBackend. It decides NEW / LOCKED / READY from the files on disk, finishes or rolls back interrupted database swaps together with their staged key, and answers the only commands allowed before the data is open (`system.status`, `system.setup`, `vault.unlock`, `vault.inspectBackup`, `vault.restoreBackup`).
+- **Vault** (`security/vault.ts`, `security/keyring.ts`) holds the unlocked data key and keeps its recovery wrap in step: key file, database copy, every backup manifest. The desktop app injects a **DeviceKeyStore** backed by Electron `safeStorage` (Windows DPAPI, per Windows user).
+- **JobRunner / worker thread** (`worker/`, bundled as `out/main/backup-worker.js`): backup packaging and verification, restore validation and re-encryption, encrypting a copy, and the full integrity check each run with their own SQLite connection off the main thread. The main thread only takes the consistent snapshot: a checkpoint plus an asynchronous file copy with automatic checkpoints paused.
+- The renderer never receives keys or passphrase-derived material. It sends the passphrase once to the main process for unlock, setup or restore. Passphrases are redacted from logs and audit metadata by key name (`pass…`) and never logged by value (test: *secrets never reach logs or the audit trail*).

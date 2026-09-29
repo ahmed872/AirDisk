@@ -38,6 +38,10 @@ async function bigBackend(dataDir: string, worker: string | null): Promise<{ b: 
     db.transaction(() => {
       for (let i = 0; i < 60_000; i++) b.svc.deps.audit.append(SYSTEM_ACTOR, { action: 'test.bulk', entityType: 'test', metadata: { i, pad: 'x'.repeat(200) } });
     })();
+    // The only main-thread step of a backup is checkpointing what is still in the WAL. In normal
+    // use SQLite's auto-checkpoint keeps that under ~1,000 pages; this bulk insert is one giant
+    // transaction, so bring the WAL back to its normal state before measuring.
+    db.pragma('wal_checkpoint(TRUNCATE)');
   }
   const r = await call('auth.login', { username: ADMIN.username, password: ADMIN.password });
   return { b, session: (r.session as { set: string }).set };

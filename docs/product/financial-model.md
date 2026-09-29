@@ -1,6 +1,6 @@
 # AirDesk — Financial Model (as implemented)
 
-The design is [Phase 0 §04](../phase-0/04-financial-model.md). It has not been rewritten; 1.0.0-rc.1 implements every posting rule except FX_ADJUSTMENT (reserved).
+The design is [Phase 0 §04](../phase-0/04-financial-model.md). It has not been rewritten; 1.0.0-rc.2 implements every posting rule except FX_ADJUSTMENT (reserved). Encryption at rest (rc.2) changed no posting rule and no amount: a mixed month of activity produces identical reports, statements, dashboard, trial balance and account balances before encryption, after encryption and after recovery on a new PC (`encryption-recovery.test.ts`). VAT is not calculated ([vat-e-invoicing.md](vat-e-invoicing.md)).
 
 ## 1. Principles
 

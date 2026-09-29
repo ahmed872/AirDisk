@@ -1,8 +1,10 @@
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import { createUlidGenerator } from '../src';
-import { ready } from './helpers';
+import { AppLauncher, TEST_ARGON2, TEST_KDF, createArgon2Hasher, createMemoryLogger, createUlidGenerator } from '../src';
+import { ADMIN, ready } from './helpers';
 
 /**
  * Representative-office performance test (owner requirement §54). Skipped in
@@ -144,7 +146,48 @@ describe.skipIf(!RUN)('performance with a representative office dataset', () => 
     const backup = await env.backend.createBackup(null, 'MANUAL');
     const backupMs = Math.round(performance.now() - backupStart);
     const backupSizeMb = Math.round(backup.sizeBytes / 1048576 * 10) / 10;
-    const report = { counts, setup, storage: { dbSizeMb, backupSizeMb, backupMs }, results };
+
+    // Encrypted installation on the same data, with the backup worker thread exactly as in the desktop app.
+    env.backend.close();
+    mkdirSync(resolve(__dirname, '../../../node_modules/.cache'), { recursive: true });
+    const bundleDir = mkdtempSync(resolve(__dirname, '../../../node_modules/.cache/airdesk-perf-'));
+    const workerPath = resolve(bundleDir, 'backup-worker.cjs');
+    await build({ entryPoints: [resolve(__dirname, '../src/worker/worker-entry.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: workerPath, logLevel: 'silent', external: ['better-sqlite3-multiple-ciphers', '@node-rs/argon2'] });
+    const keys = new Map<string, Buffer>();
+    const launcher = await AppLauncher.start({
+      dataDir: env.dataDir, appVersion: 'perf', logger: createMemoryLogger(), hasher: createArgon2Hasher(TEST_ARGON2), kdf: TEST_KDF, workerPath,
+      deviceKeys: { kind: 'test', isAvailable: () => true, load: (k) => keys.get(k) ?? null, save: (k, v) => void keys.set(k, v), forget: (k) => void keys.delete(k), list: () => [...keys.keys()] },
+    });
+    const lcall = async (command: string, payload: unknown, sessionId: string | null = null) => launcher.dispatch({ command, payload, sessionId, workstation: 'PERF' });
+    const sid = async () => ((await lcall('auth.login', { username: ADMIN.username, password: ADMIN.password })).session as { set: string }).set;
+    const lagDuring = async (work: () => Promise<unknown>) => {
+      let last = performance.now();
+      let lag = 0;
+      const t = setInterval(() => { const n = performance.now(); lag = Math.max(lag, n - last - 5); last = n; }, 5);
+      const start = performance.now();
+      const r = await work();
+      clearInterval(t);
+      lag = Math.max(lag, performance.now() - last - 5);
+      return { ms: Math.round(performance.now() - start), maxEventLoopLagMs: Math.round(lag), r };
+    };
+    const passphrase = 'performance test recovery phrase';
+    let s = await sid();
+    const enable = await lagDuring(() => lcall('security.enableEncryption', { password: ADMIN.password, passphrase, confirmation: passphrase }, s));
+    expect((enable.r as { ok: boolean }).ok).toBe(true);
+    s = await sid();
+    const encBackup = await lagDuring(() => lcall('backup.create', {}, s));
+    const encIntegrity = await lagDuring(() => lcall('integrity.run', {}, s));
+    const encSizeMb = Math.round(((encBackup.r as { data: { sizeBytes: number } }).data.sizeBytes / 1048576) * 10) / 10;
+    const encrypted = {
+      enableEncryptionMs: enable.ms, enableEncryptionMaxLagMs: enable.maxEventLoopLagMs,
+      backupMs: encBackup.ms, backupMaxLagMs: encBackup.maxEventLoopLagMs, backupSizeMb: encSizeMb,
+      integrityMs: encIntegrity.ms, integrityMaxLagMs: encIntegrity.maxEventLoopLagMs, workerJobs: launcher.backend!.jobs.stats,
+    };
+    launcher.close();
+    rmSync(bundleDir, { recursive: true, force: true });
+    expect(encBackup.maxEventLoopLagMs).toBeLessThan(1000);
+    expect(encIntegrity.maxEventLoopLagMs).toBeLessThan(250);
+    const report = { counts, setup, storage: { dbSizeMb, backupSizeMb, backupMs, encrypted }, results };
     writeFileSync(process.env.AIRDESK_PERF_OUT ?? 'perf-results.json', JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
     expect(counts.booking).toBe(N_BOOK);

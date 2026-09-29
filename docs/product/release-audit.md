@@ -1,5 +1,16 @@
 # AirDesk 1.0.0-rc.1: final pre-release audit
 
+> **Status update (1.0.0-rc.2):** The blockers in §D have since been worked on; see [release-gate-1.0.0.md](release-gate-1.0.0.md).
+> - Encryption at rest, encrypted backups, the recovery passphrase, clean-PC recovery, backup work moved off the main thread, audit tail/anchor checks and the signing pipeline are **implemented and tested**.
+> - Still open:
+>   - the certificate itself;
+>   - physical Windows 10/11 validation;
+>   - the physical DR drill;
+>   - the VAT decision.
+>
+> This report is kept unchanged below as the record of the rc.1 audit.
+
+
 - **Branch:** `claude/loving-rubin-kyf18y`.
 - **Audited code commit:** `59c3634`. The CI run numbers are in §J.
 - **Scope checked throughout:** AirDesk records and manages existing ticket transactions:

@@ -1,6 +1,6 @@
 # AirDesk — Database (schema 6)
 
-SQLite via `better-sqlite3-multiple-ciphers` (SQLCipher-capable; encryption not enabled in 1.0.0-rc.1). WAL journal, `synchronous=FULL`, `foreign_keys=ON`, all tables `STRICT`, ULID primary keys, money as integer minor units, dates as ISO-8601 text. The Phase 0 reference schema is [schema-draft.sql](../phase-0/schema-draft.sql); `validate_schema.py` (28 checks) still passes against it.
+SQLite via `better-sqlite3-multiple-ciphers` 12 (SQLite 3.53.4, SQLite3 Multiple Ciphers 2.4.0). **Encrypted at rest** since 1.0.0-rc.2: SQLCipher v4 page format, AES-256 + HMAC-SHA512 per page, a raw 256-bit data key ([encryption-plan.md](encryption-plan.md)). WAL journal, `synchronous=FULL`, `foreign_keys=ON`, all tables `STRICT`, ULID primary keys, money as integer minor units, dates as ISO-8601 text. The Phase 0 reference schema is [schema-draft.sql](../phase-0/schema-draft.sql); `validate_schema.py` (28 checks) still passes against it.
 
 ## 1. Migrations
 
@@ -47,3 +47,19 @@ Upgrade path verified by tests: a Phase 2 database (schema 2) with real data is 
 ## 5. Size and speed
 
 See [performance.md](performance.md): a database with 10,000 ticket records, 20,000 tickets, 30,000 documents and 50,000 audit events, with measured search, record, dashboard, statement and report times.
+
+
+## 6. Files in the data folder (1.0.0-rc.2)
+
+| File | Content |
+|---|---|
+| `airdesk.db`, `-wal`, `-shm` | Encrypted company database |
+| `airdesk.key` | Recovery wrap of the data key (Argon2id + AES-256-GCM); useless without the passphrase |
+| `airdesk.key.incoming` | Only during a restore or encryption swap (staged key, crash-safe) |
+| `restore-pending.json` | Only during a swap (crash-recovery marker) |
+| `airdesk.db.pre-restore-*` | The previous database kept aside by a restore, in its own key |
+| `backups/*.adbk` | Backups (format 2: encrypted database + sealed manifest; format 1: rc.1 plain) |
+| `backup-history.jsonl` | Backup/restore history with audit-chain checkpoints (`auditSeq`, `auditHeadHash`) |
+| `logs/` | Application logs (no customer data, no secrets) |
+
+The database also stores its recovery wrap in `app_setting` (`security.recovery_wrap`). Integrity checks gained `INV-9.audit_tail` (records cut off the end of the audit log) and `INV-9.audit_anchors` (the chain still contains every checkpoint recorded since the last restore). No schema migration was needed: schema version stays 6.

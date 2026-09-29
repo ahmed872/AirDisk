@@ -1,4 +1,4 @@
-# AirDesk 1.0.0-rc.1 — Product documentation
+# AirDesk 1.0.0-rc.2 — Product documentation
 
 > AirDesk records and manages airline-ticket transactions booked and issued **outside** the system. It does **not** search flights, reserve seats, create PNRs, issue tickets, or connect to any GDS, airline or consolidator system.
 
@@ -12,7 +12,11 @@
 | [financial-model.md](financial-model.md) | Accounts, documents, posting rules P1–P12, business limits, derived figures | English |
 | [performance.md](performance.md) | Representative-office dataset and measurements | English |
 | [deployment-and-release.md](deployment-and-release.md) | Build, CI gates, versioning, update readiness, release checklist, white-label | English |
-| [encryption-plan.md](encryption-plan.md) | Encryption at rest: status, verified library behaviour, exact implementation steps | English |
+| [encryption-plan.md](encryption-plan.md) | Encryption at rest and recovery: keys, passphrase, start-up states, rc.1 upgrade, audit-chain analysis | English |
+| [disaster-recovery.md](disaster-recovery.md) | Clean-PC restore procedure for the owner (+ drill record) | English |
+| [physical-windows-checklist.md](physical-windows-checklist.md) | Manual Windows 10/11 release checklist | English |
+| [vat-e-invoicing.md](vat-e-invoicing.md) | VAT / ETA / ZATCA status and requirements | English |
+| [release-gate-1.0.0.md](release-gate-1.0.0.md) | Final release gate report (1.0.0-rc.2) | English |
 | [release-audit.md](release-audit.md) | Final pre-release audit report (A–L), release recommendation | English |
 | [final-report.md](final-report.md) | Product completion report (A–N) | English |
 
