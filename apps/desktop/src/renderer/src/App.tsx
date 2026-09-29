@@ -150,7 +150,7 @@ function Shell({ user, onPrefs, onSignedOut, onRestored }: {
         {page === 'company' && <CompanySettingsPage can={can} onChanged={onPrefs} />}
         {page === 'audit' && <AuditPage canListUsers={can('user.view')} />}
         {page === 'system' && (
-          <SystemPage canBackup={can('backup.create')} canRestore={can('backup.restore')} canCheck={can('integrity.run')} onRestored={onRestored} />
+          <SystemPage canBackup={can('backup.create')} canRestore={can('backup.restore')} canCheck={can('integrity.run')} canSettings={can('settings.system')} onRestored={onRestored} />
         )}
       </main>
       {about && <AboutDialog onClose={() => setAbout(false)} />}

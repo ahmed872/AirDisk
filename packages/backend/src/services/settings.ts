@@ -14,6 +14,10 @@ export const SETTING_SCHEMAS = {
   'finance.backdate_days': z.number().int().min(0).max(366),
   'aging.buckets': z.array(z.number().int().min(0)).min(1).max(10).refine((a) => a.every((v, i) => i === 0 || v > a[i - 1]!), 'ascending'),
   'backup.directory': z.string().max(1000).nullable(),
+  /** Automatic backup when the newest successful backup is older than this (0 = off). */
+  'backup.auto_interval_hours': z.number().int().min(0).max(720),
+  /** How many automatic (SCHEDULED) backup files to keep; manual and safety backups are never pruned. */
+  'backup.keep_scheduled': z.number().int().min(1).max(365),
   'schedule.major_threshold_minutes': z.number().int().min(5).max(1440),
 } as const;
 
@@ -28,6 +32,8 @@ export const SETTING_DEFAULTS: { [K in SettingKey]: SettingValue<K> } = {
   'finance.backdate_days': 3,
   'aging.buckets': [0, 7, 30, 60],
   'backup.directory': null,
+  'backup.auto_interval_hours': 24,
+  'backup.keep_scheduled': 14,
   'schedule.major_threshold_minutes': 60,
 };
 

@@ -7,4 +7,5 @@ export interface AirDeskBridge {
   invoke<T = unknown>(command: import('./schemas').CommandName, payload?: unknown): Promise<import('./dto').CommandResult<T>>;
   exportPdf(fileName: string): Promise<{ ok: boolean; code?: string }>;
   exportCsv(fileName: string, content: string): Promise<{ ok: boolean; code?: string }>;
+  pickBackupFile(): Promise<string | null>;
 }

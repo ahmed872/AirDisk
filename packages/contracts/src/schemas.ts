@@ -222,6 +222,8 @@ export const commandSchemas = {
 
   'backup.create': z.object({ destinationDir: z.string().max(1000).optional() }).strict(),
   'backup.list': z.object({}).strict(),
+  'backup.schedule': z.object({}).strict(),
+  'backup.setSchedule': z.object({ intervalHours: z.number().int().min(0).max(720), keep: z.number().int().min(1).max(365) }).strict(),
   'backup.restore': z.object({ filePath: z.string().min(1).max(1000), password, confirmation: z.literal('RESTORE') }).strict(),
 
   'audit.list': z

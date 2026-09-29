@@ -44,6 +44,8 @@ export const CONTENT_SECURITY_POLICY = [
 export const IPC_CHANNEL = 'airdesk:invoke';
 
 export const EXPORT_CHANNEL = 'airdesk:export';
+/** Lets the user pick a backup file to restore; returns only the chosen path. */
+export const PICK_BACKUP_CHANNEL = 'airdesk:pick-backup';
 export const MAX_EXPORT_TEXT = 10 * 1024 * 1024;
 
 /**

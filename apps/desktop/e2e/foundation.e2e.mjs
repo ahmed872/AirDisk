@@ -29,7 +29,7 @@ await win.setViewportSize({ width: 1280, height: 820 });
 await win.waitForSelector('text=إعداد الشركة لأول مرة');
 assert.equal(await win.evaluate(() => document.documentElement.dir), 'rtl');
 assert.equal(await win.evaluate(() => typeof require), 'undefined', 'renderer must not have Node');
-assert.deepEqual(await win.evaluate(() => Object.keys(window.airdesk)), ['invoke', 'exportPdf', 'exportCsv'], 'bridge surface is exactly these three functions');
+assert.deepEqual(await win.evaluate(() => Object.keys(window.airdesk)), ['invoke', 'exportPdf', 'exportCsv', 'pickBackupFile'], 'bridge surface is exactly these four functions');
 await win.screenshot({ path: `${SP}/01-setup.png` });
 const inputs = win.locator('form input');
 await inputs.nth(0).fill('وكالة النيل للسياحة');

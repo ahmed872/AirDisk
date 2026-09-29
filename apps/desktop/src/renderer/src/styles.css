@@ -203,3 +203,7 @@ table.lines tfoot th { background: #f6f8fa; }
   .overlay { background: none; position: static; }
   .dialog { box-shadow: none; max-height: none; width: 100%; }
 }
+
+/* Input with an inline action button (e.g. restore file picker) */
+.input-with-button { display: flex; gap: 8px; align-items: stretch; }
+.input-with-button input { flex: 1; min-width: 0; }

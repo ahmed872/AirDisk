@@ -190,6 +190,8 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
     },
   },
   'backup.list': { access: perm('backup.create', 'backup.restore'), run: (ctx) => ctx.backend.listBackups(actor(ctx)) },
+  'backup.schedule': { access: perm('backup.create', 'backup.restore', 'settings.system'), run: (ctx) => ctx.backend.backupSchedule(actor(ctx)) },
+  'backup.setSchedule': { access: perm('settings.system'), run: (ctx, i) => ctx.backend.setBackupSchedule(actor(ctx), i) },
   'backup.restore': {
     access: perm('backup.restore'),
     run: async (ctx, i) => {

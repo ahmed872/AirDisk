@@ -1,9 +1,10 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ChartOfAccounts, DomainError, ErrorCode } from '@airdesk/domain';
 import type { BackupRecordDto, IntegrityReportDto } from '@airdesk/contracts';
 import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
 import {
+  BACKUP_EXTENSION,
   appendBackupHistory,
   createBackupFile,
   recoverPendingRestore,
@@ -26,7 +27,7 @@ import { CurrencyService } from '../services/currency-service';
 import { LedgerQueryService } from '../services/ledger-query-service';
 import { PostingService } from '../services/posting-service';
 import { SessionManager } from '../services/session-manager';
-import { readSetting } from '../services/settings';
+import { readSetting, writeSetting } from '../services/settings';
 import { UserService } from '../services/user-service';
 import { CustomerService } from '../services/customer-service';
 import { SupplierService } from '../services/supplier-service';
@@ -284,6 +285,72 @@ export class AppBackend {
     }
   }
 
+  /**
+   * Automatic backup (owner decision Q12, Phase 0 §10): runs when the newest
+   * successful backup is older than `backup.auto_interval_hours`, then keeps
+   * only the newest `backup.keep_scheduled` automatic files. Manual,
+   * pre-migration and pre-restore backups are never deleted automatically.
+   * Called by the desktop shell at start-up and hourly.
+   */
+  async runScheduledBackup(): Promise<{ ran: boolean; filePath?: string; pruned: string[] }> {
+    const hours = readSetting(this.db, 'backup.auto_interval_hours');
+    if (hours === 0 || this.restoring || this.automaticBackupRunning || this.services.auth.isSetupRequired()) return { ran: false, pruned: [] };
+    const last = this.lastSuccessfulBackupAt();
+    if (last && this.opts.clock.now().getTime() - Date.parse(last) < hours * 3_600_000) return { ran: false, pruned: [] };
+    this.automaticBackupRunning = true;
+    try {
+      const result = await this.createBackup(null, 'SCHEDULED');
+      return { ran: true, filePath: result.filePath, pruned: this.pruneScheduledBackups() };
+    } finally {
+      this.automaticBackupRunning = false;
+    }
+  }
+
+  private automaticBackupRunning = false;
+  private restoring = false;
+
+  backupSchedule(actor: Actor): { intervalHours: number; keep: number; lastSuccessfulAt: string | null; nextDueAt: string | null; directory: string } {
+    requirePermission(this.services.deps, actor, ['backup.create', 'backup.restore', 'settings.system'], 'backup.schedule');
+    const intervalHours = readSetting(this.db, 'backup.auto_interval_hours');
+    const last = this.lastSuccessfulBackupAt();
+    const nextDueAt = intervalHours === 0 ? null : last ? new Date(Date.parse(last) + intervalHours * 3_600_000).toISOString() : this.opts.clock.now().toISOString();
+    return { intervalHours, keep: readSetting(this.db, 'backup.keep_scheduled'), lastSuccessfulAt: last, nextDueAt, directory: this.backupDir };
+  }
+
+  setBackupSchedule(actor: Actor, input: { intervalHours: number; keep: number }): ReturnType<AppBackend['backupSchedule']> {
+    requirePermission(this.services.deps, actor, 'settings.system', 'backup.setSchedule');
+    const before = { intervalHours: readSetting(this.db, 'backup.auto_interval_hours'), keep: readSetting(this.db, 'backup.keep_scheduled') };
+    const now = this.opts.clock.now().toISOString();
+    this.db.transaction(() => {
+      writeSetting(this.db, 'backup.auto_interval_hours', input.intervalHours, actor.userId, now);
+      writeSetting(this.db, 'backup.keep_scheduled', input.keep, actor.userId, now);
+      this.services.deps.audit.append(actorOf(actor), { action: 'settings.backup_schedule_changed', entityType: 'system', before, after: input });
+    })();
+    return this.backupSchedule(actor);
+  }
+
+  private lastSuccessfulBackupAt(): string | null {
+    return (this.db.prepare(`SELECT MAX(finished_at) AS at FROM backup_record WHERE status = 'SUCCEEDED' AND kind IN ('MANUAL','SCHEDULED','ON_EXIT')`).get() as { at: string | null }).at;
+  }
+
+  /** Deletes automatic backup files beyond the retention count (their history rows and audit records stay). */
+  private pruneScheduledBackups(): string[] {
+    const keep = readSetting(this.db, 'backup.keep_scheduled');
+    const rows = this.db.prepare(`SELECT id, file_path FROM backup_record WHERE kind = 'SCHEDULED' AND status = 'SUCCEEDED' AND file_path IS NOT NULL ORDER BY finished_at DESC`).all() as { id: string; file_path: string }[];
+    const removed: string[] = [];
+    for (const r of rows.slice(keep)) {
+      if (!r.file_path.endsWith(BACKUP_EXTENSION) || !existsSync(r.file_path)) continue;
+      try {
+        rmSync(r.file_path);
+        removed.push(r.file_path);
+      } catch (e) {
+        this.opts.logger.warn('Could not remove an old automatic backup', { filePath: r.file_path, error: (e as Error).message });
+      }
+    }
+    if (removed.length) this.services.deps.audit.append(SYSTEM_ACTOR, { action: 'backup.pruned', entityType: 'backup', metadata: { kind: 'SCHEDULED', keep, removed } });
+    return removed;
+  }
+
   listBackups(actor: Actor): BackupRecordDto[] {
     requirePermission(this.services.deps, actor, ['backup.create', 'backup.restore'], 'backup.list');
     return (
@@ -305,6 +372,16 @@ export class AppBackend {
   async restore(actor: Actor, filePath: string, password: string): Promise<{ manifest: unknown; preRestoreBackup: string }> {
     requirePermission(this.services.deps, actor, 'backup.restore', 'backup.restore');
     await this.services.auth.confirmPassword(actor, password);
+    if (this.automaticBackupRunning) throw new DomainError(ErrorCode.CONFLICT, 'An automatic backup is running; try again in a minute', { reason: 'BACKUP_RUNNING' });
+    this.restoring = true;
+    try {
+      return await this.restoreValidated(actor, filePath);
+    } finally {
+      this.restoring = false;
+    }
+  }
+
+  private async restoreValidated(actor: Actor, filePath: string): Promise<{ manifest: unknown; preRestoreBackup: string }> {
     const validated = validateBackupFile(filePath, { maxSchemaVersion: this.opts.migrations.length, tempDir: this.opts.dataDir });
     let safety: BackupResult;
     try {

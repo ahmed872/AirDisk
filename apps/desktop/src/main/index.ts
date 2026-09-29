@@ -5,7 +5,7 @@ import { AppBackend, type Logger } from '@airdesk/backend';
 import { createFileLogger } from './file-logger';
 import { resolveDataDir } from './paths';
 import { writeFileSync } from 'node:fs';
-import { CONTENT_SECURITY_POLICY, EXPORT_CHANNEL, IPC_CHANNEL, MAX_EXPORT_TEXT, isAllowedExternalUrl, sanitizeExportName, secureWebPreferences } from './security';
+import { CONTENT_SECURITY_POLICY, EXPORT_CHANNEL, IPC_CHANNEL, PICK_BACKUP_CHANNEL, MAX_EXPORT_TEXT, isAllowedExternalUrl, sanitizeExportName, secureWebPreferences } from './security';
 import { runSmokeTest, type SmokePhase } from './smoke-test';
 
 let backend: AppBackend | null = null;
@@ -110,6 +110,35 @@ function registerExportIpc(): void {
   });
 }
 
+function registerPickBackupIpc(): void {
+  ipcMain.handle(PICK_BACKUP_CHANNEL, async (event) => {
+    if (!backend || !isTrustedSender(event.senderFrame?.url ?? '')) return null;
+    const sid = sessionByWebContents.get(event.sender.id);
+    let allowed = false;
+    try {
+      allowed = !!sid && backend.svc.sessions.resolve(sid).permissions.has('backup.restore');
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) return null;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const choice = await dialog.showOpenDialog(win!, { properties: ['openFile'], filters: [{ name: 'AirDesk backup', extensions: ['adbk'] }], defaultPath: backend.backupDir });
+    return choice.canceled ? null : choice.filePaths[0] ?? null;
+  });
+}
+
+/** Automatic backups (owner decision Q12): checked shortly after start and then every hour. */
+function scheduleAutomaticBackups(): void {
+  const run = () => {
+    backend?.runScheduledBackup().then(
+      (r) => { if (r.ran) logger?.info('Automatic backup created', { filePath: r.filePath, pruned: r.pruned.length }); },
+      (e: Error) => logger?.error('Automatic backup failed', { error: e.message }),
+    );
+  };
+  setTimeout(run, 60_000).unref();
+  setInterval(run, 3_600_000).unref();
+}
+
 function hardenSessions(): void {
   const ses = session.defaultSession;
   ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
@@ -161,7 +190,9 @@ void app.whenReady().then(async () => {
   hardenSessions();
   registerIpc();
   registerExportIpc();
+  registerPickBackupIpc();
   createWindow();
+  scheduleAutomaticBackups();
 });
 
 process.on('uncaughtException', (e) => logger?.error('uncaughtException', { error: e.message, stack: e.stack }));
