@@ -104,10 +104,10 @@ export class ReportService {
         rows.set(key, row);
       }
       const bal = sign * i.bal;
-      // Credits and unapplied on-account amounts are shown separately, never netted into ageing buckets.
-      if (bal < 0 || i.booking_id === null) {
-        row.creditMinor += bal < 0 ? -bal : 0;
-        if (bal > 0) row.currentMinor += bal;
+      // Credits are shown separately, never netted into ageing buckets. Amounts owed on account
+      // (e.g. opening balances) age from their first entry date.
+      if (bal < 0) {
+        row.creditMinor += -bal;
       } else {
         const bucket = agingBucket(i.due, asOf);
         if (bucket === 'CURRENT') row.currentMinor += bal;

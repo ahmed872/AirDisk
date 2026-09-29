@@ -132,6 +132,9 @@ describe('posting rules', () => {
       supplierPayment(900),
       { ...supplierPayment(900), docType: 'SUPPLIER_REFUND' },
       { docType: 'EXPENSE', docDate: DATE, currency: 'EGP', moneyAccountId: 'M1', paymentMethod: 'CASH', lines: [{ lineType: 'EXPENSE', amountMinor: 50, expenseCategoryId: 'E1' }] },
+      { docType: 'MONEY_TRANSFER', docDate: DATE, currency: 'EGP', reasonCode: 'ACCOUNT_TRANSFER', moneyAccountId: 'M1', counterMoneyAccountId: 'M2', lines: [{ lineType: 'TRANSFER', amountMinor: 50 }] },
+      { docType: 'BALANCE_APPLICATION', docDate: DATE, currency: 'EGP', customerId: 'C1', lines: [{ lineType: 'APPLICATION', amountMinor: 50, bookingId: 'B1' }] },
+      { docType: 'OPENING_BALANCE', docDate: DATE, currency: 'EGP', reasonCode: 'OPENING_DEBIT', customerId: 'C1', lines: [{ lineType: 'OPENING', amountMinor: 50 }] },
     ];
     for (const d of drafts) expect(() => validateJournal(journalOf(d), chart)).not.toThrow();
     expect(drafts.map((d) => d.docType).sort()).toEqual(DOC_TYPES.filter((t) => DOC_TYPE_META[t].supported).sort());

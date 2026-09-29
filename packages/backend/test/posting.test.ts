@@ -239,7 +239,7 @@ describe('posting rules enforced by the service', () => {
   it('document types scheduled for later phases are refused', async () => {
     const { cash, post, admin } = await world();
     expect(
-      codeOf(() => post.post(admin, { docType: 'MONEY_TRANSFER', docDate: '2026-09-28', currency: 'EGP', lines: [{ lineType: 'TRANSFER', amountMinor: 1 }], moneyAccountId: cash })),
+      codeOf(() => post.post(admin, { docType: 'FX_ADJUSTMENT', docDate: '2026-09-28', currency: 'EGP', lines: [{ lineType: 'FX', amountMinor: 1 }], moneyAccountId: cash })),
     ).toBe(ErrorCode.UNSUPPORTED_DOCUMENT);
   });
 

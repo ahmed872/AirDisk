@@ -7,10 +7,11 @@ import { CustomerPicker, SupplierSelect, useSuppliers } from '../lookups';
 import { CurrencySelect, MoneyInput, useMoney } from '../money';
 import { useFmt } from '../prefs';
 import { DocumentPrint } from '../print';
+import { ApplyCreditDialog, OpeningBalances, TransfersSection } from './ledger-ops';
 import { PaymentDialog, type PayKind } from './payments';
 
 type Can = (p: string) => boolean;
-type Tab = 'customer' | 'supplier' | 'expenses' | 'treasury' | 'rates' | 'categories';
+type Tab = 'customer' | 'supplier' | 'expenses' | 'treasury' | 'opening' | 'rates' | 'categories';
 interface OpenRow { bookingId: string | null; bookingNo: string | null; currency: string; openMinor: number; dueDate: string | null }
 
 const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; };
@@ -22,7 +23,8 @@ export function FinancePage({ can }: { can: Can }) {
     { id: 'customer', label: 'receivePayments', visible: can('payment.customer.receive') || can('payment.customer.refund') },
     { id: 'supplier', label: 'supplierPayments', visible: can('payment.supplier.pay') || can('payment.supplier.record_refund') },
     { id: 'expenses', label: 'expensesTab', visible: can('expense.view') || can('expense.create') },
-    { id: 'treasury', label: 'treasury', visible: can('treasury.view') || can('treasury.manage_accounts') },
+    { id: 'treasury', label: 'treasury', visible: can('treasury.view') || can('treasury.manage_accounts') || can('treasury.transfer') },
+    { id: 'opening', label: 'openingBalances', visible: can('finance.opening_balances') },
     { id: 'rates', label: 'rates', visible: can('finance.exchange_rates') },
     { id: 'categories', label: 'categories', visible: can('expense.category.manage') },
   ];
@@ -38,6 +40,7 @@ export function FinancePage({ can }: { can: Can }) {
       {tab === 'supplier' && <PartyPayments party="SUPPLIER" can={can} />}
       {tab === 'expenses' && <Expenses can={can} />}
       {tab === 'treasury' && <Treasury can={can} />}
+      {tab === 'opening' && <OpeningBalances />}
       {tab === 'rates' && <Rates />}
       {tab === 'categories' && <Categories />}
     </div>
@@ -52,6 +55,8 @@ function PartyPayments({ party, can }: { party: 'CUSTOMER' | 'SUPPLIER'; can: Ca
   const [customer, setCustomer] = useState<CustomerDto | null>(null);
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ kind: PayKind; currency: string; items: OpenRow[] } | null>(null);
+  const [applying, setApplying] = useState<string | null>(null);
+  const canApply = can('balance.apply') && (party === 'CUSTOMER' || can('supplier.view_financial') || can('payment.supplier.pay'));
   const partyId = party === 'CUSTOMER' ? customer?.id ?? null : supplierId;
   const partyName = party === 'CUSTOMER' ? customer?.fullName ?? '' : suppliers.find((s: SupplierDto) => s.id === supplierId)?.name ?? '';
   const open = useLoader(() => (partyId ? call<OpenRow[]>('payments.openItems', { party, partyId }) : Promise.resolve([] as OpenRow[])), [partyId, party]);
@@ -82,6 +87,8 @@ function PartyPayments({ party, can }: { party: 'CUSTOMER' | 'SUPPLIER'; can: Ca
           {currencies.map((c) => (
             <span key={c} className="actions tight">
               {canPay && <button className="primary" onClick={() => setDialog({ kind: payKind, currency: c, items: rows.filter((r) => r.currency === c && r.bookingId && r.openMinor > 0) })} data-testid={`fin-pay-${c}`}>{t(party === 'CUSTOMER' ? 'recordPayment' : 'paySupplier')} ({c})</button>}
+              {canApply && rows.some((r) => r.currency === c && r.openMinor < 0) && rows.some((r) => r.currency === c && r.openMinor > 0 && r.bookingId) &&
+                <button onClick={() => setApplying(c)} data-testid={`fin-apply-${c}`}>{t('applyCredit')} ({c})</button>}
               {canRefund && rows.some((r) => r.currency === c && r.openMinor < 0) && <button onClick={() => setDialog({ kind: refundKind, currency: c, items: rows.filter((r) => r.currency === c && r.bookingId && r.openMinor < 0).map((r) => ({ ...r, openMinor: -r.openMinor })) })}>{t(party === 'CUSTOMER' ? 'refundCustomer' : 'supplierRefund')} ({c})</button>}
             </span>
           ))}
@@ -91,7 +98,11 @@ function PartyPayments({ party, can }: { party: 'CUSTOMER' | 'SUPPLIER'; can: Ca
         <PaymentDialog kind={dialog.kind} partyId={partyId} partyName={partyName} currency={dialog.currency}
           items={dialog.items.map((r) => ({ bookingId: r.bookingId!, bookingNo: r.bookingNo!, openMinor: r.openMinor }))}
           canOnAccount={can('payment.accept_overpayment') && (dialog.kind === 'receive' || dialog.kind === 'paySupplier')}
+          onAccountDueMinor={dialog.kind === 'receive' || dialog.kind === 'paySupplier' ? Math.max(0, rows.find((r) => r.currency === dialog.currency && !r.bookingId)?.openMinor ?? 0) : 0}
           onDone={() => open.reload()} onClose={() => setDialog(null)} />
+      )}
+      {applying && partyId && (
+        <ApplyCreditDialog party={party} partyId={partyId} partyName={partyName} currency={applying} rows={rows} onClose={() => setApplying(null)} onDone={() => open.reload()} />
       )}
     </section>
   );
@@ -184,6 +195,7 @@ function Treasury({ can }: { can: Can }) {
         ))}</tbody>
       </table>
       {edit && <AccountDialog account={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); list.reload(); }} />}
+      {(can('treasury.view') || can('treasury.transfer')) && <TransfersSection can={can} onChanged={list.reload} />}
     </section>
   );
 }

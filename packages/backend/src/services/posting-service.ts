@@ -33,7 +33,9 @@ export interface PostedDocument {
   supplierId: string | null;
   bookingId: string | null;
   moneyAccountId: string | null;
+  counterMoneyAccountId: string | null;
   paymentMethod: PaymentMethod | null;
+  reasonCode: string | null;
   currency: string;
   exchangeRate: string;
   totalMinor: number;
@@ -48,7 +50,7 @@ export interface PostedDocument {
 interface DocRow {
   id: string; doc_type: DocType; doc_no: string; doc_date: string; is_reversal: number; reversal_of_id: string | null;
   customer_id: string | null; supplier_id: string | null; booking_id: string | null; cancellation_request_id: string | null;
-  money_account_id: string | null; payment_method: PaymentMethod | null; payment_reference: string | null;
+  money_account_id: string | null; counter_money_account_id: string | null; payment_method: PaymentMethod | null; payment_reference: string | null;
   currency_code: string; exchange_rate: string; total_minor: number; total_base_minor: number;
   reason_code: string | null; description: string | null; created_at: string; created_by: string;
 }
@@ -118,6 +120,7 @@ export class PostingService {
         supplierId: current.supplierId,
         bookingId: current.bookingId,
         moneyAccountId: current.moneyAccountId,
+        counterMoneyAccountId: current.counterMoneyAccountId,
         paymentMethod: current.paymentMethod,
         paymentReference: original.payment_reference,
         cancellationRequestId: original.cancellation_request_id,
@@ -162,7 +165,9 @@ export class PostingService {
       supplierId: d.supplier_id,
       bookingId: d.booking_id,
       moneyAccountId: d.money_account_id,
+      counterMoneyAccountId: d.counter_money_account_id,
       paymentMethod: d.payment_method,
+      reasonCode: d.reason_code,
       currency: d.currency_code,
       exchangeRate: d.exchange_rate,
       totalMinor: d.total_minor,
@@ -210,15 +215,16 @@ export class PostingService {
     const docNo = this.nextNumber(doc.docType, doc.docDate);
     db.prepare(
       `INSERT INTO fin_document (id, doc_type, doc_no, doc_date, is_reversal, reversal_of_id, customer_id, supplier_id, booking_id,
-         cancellation_request_id, money_account_id, payment_method, payment_reference, currency_code, exchange_rate, total_minor,
+         cancellation_request_id, money_account_id, counter_money_account_id, payment_method, payment_reference, currency_code, exchange_rate, total_minor,
          total_base_minor, reason_code, description, created_at, created_by)
        VALUES (@id, @docType, @docNo, @docDate, @isReversal, @reversalOfId, @customerId, @supplierId, @bookingId, @cancellationRequestId,
-         @moneyAccountId, @paymentMethod, @paymentReference, @currency, @exchangeRate, @totalMinor, @totalBaseMinor, @reasonCode,
+         @moneyAccountId, @counterMoneyAccountId, @paymentMethod, @paymentReference, @currency, @exchangeRate, @totalMinor, @totalBaseMinor, @reasonCode,
          @description, @now, @userId)`,
     ).run({
       id: docId, docType: doc.docType, docNo, docDate: doc.docDate, isReversal: rev.isReversal ? 1 : 0, reversalOfId: rev.reversalOfId,
       customerId: doc.customerId ?? null, supplierId: doc.supplierId ?? null, bookingId: doc.bookingId ?? null,
       cancellationRequestId: doc.cancellationRequestId ?? null, moneyAccountId: doc.moneyAccountId ?? null,
+      counterMoneyAccountId: doc.counterMoneyAccountId ?? null,
       paymentMethod: doc.paymentMethod ?? null, paymentReference: doc.paymentReference ?? null, currency: doc.currency,
       exchangeRate: doc.exchangeRate, totalMinor: doc.totalMinor, totalBaseMinor: doc.totalBaseMinor,
       reasonCode: doc.reasonCode ?? null, description: doc.description ?? null, now, userId: actor.userId,
@@ -257,6 +263,8 @@ export class PostingService {
         docNo, docType: doc.docType, docDate: doc.docDate, currency: doc.currency, exchangeRate: doc.exchangeRate,
         totalMinor: doc.totalMinor, totalBaseMinor: doc.totalBaseMinor, customerId: doc.customerId ?? null,
         supplierId: doc.supplierId ?? null, bookingId: doc.bookingId ?? null, moneyAccountId: doc.moneyAccountId ?? null,
+        ...(doc.counterMoneyAccountId ? { counterMoneyAccountId: doc.counterMoneyAccountId } : {}),
+        ...(doc.reasonCode && doc.reasonCode !== 'REVERSAL' ? { reasonCode: doc.reasonCode } : {}),
       },
       metadata: rev.isReversal ? { reversalOfId: rev.reversalOfId, originalNo: rev.originalNo, reason: rev.reason } : undefined,
     });
@@ -294,8 +302,9 @@ export class PostingService {
     exists('supplier', doc.supplierId, 'Supplier');
     exists('booking', doc.bookingId, 'Booking');
     for (const l of doc.lines) exists('booking', l.bookingId, 'Booking');
-    if (doc.moneyAccountId) {
-      const ma = db.prepare('SELECT currency_code, is_active FROM money_account WHERE id = ?').get(doc.moneyAccountId) as { currency_code: string; is_active: number } | undefined;
+    for (const accountId of [doc.moneyAccountId, doc.counterMoneyAccountId]) {
+      if (!accountId) continue;
+      const ma = db.prepare('SELECT currency_code, is_active FROM money_account WHERE id = ?').get(accountId) as { currency_code: string; is_active: number } | undefined;
       if (!ma) throw new DomainError(ErrorCode.NOT_FOUND, 'Money account not found');
       if (ma.is_active !== 1) throw new DomainError(ErrorCode.VALIDATION, 'Money account is inactive');
       if (ma.currency_code !== doc.currency) {

@@ -4,7 +4,8 @@
  * flight → supplier → cost → customer price), confirm it as ticketed, take two
  * customer payments, pay the supplier, record a schedule change and the customer
  * notification, then check profit, statement, travel and dashboard — and that a
- * Sales Agent cannot see cost/profit. Run: `xvfb-run -a node apps/desktop/e2e/operations.e2e.mjs`.
+ * Sales Agent cannot see cost/profit. Also covers go-live opening balances, a
+ * cash-to-bank transfer and applying a customer credit to a record. Run: `xvfb-run -a node apps/desktop/e2e/operations.e2e.mjs`.
  */
 import { _electron as electron } from 'playwright-core';
 import assert from 'node:assert/strict';
@@ -190,6 +191,61 @@ try {
     const all = await must('dashboard.metrics', { from: '2026-01-01', to: '2026-12-31' });
     assert.equal(all.financial.grossProfit, 40_000);
     assert.equal(all.financial.receivables, 0);
+  });
+
+  await step('opening-balance-transfer-apply-credit', async () => {
+    const closePrint = async () => { await win.click('[data-testid=print-dialog] footer button:has-text("إغلاق")'); await win.waitForSelector('[data-testid=print-dialog]', { state: 'detached' }); };
+    const bank = await must('moneyAccounts.save', { name: 'البنك الأهلي', accountType: 'BANK', currencyCode: 'EGP', bankName: 'NBE' });
+    const cash = (await must('moneyAccounts.list', {})).find((a) => a.accountType === 'CASH');
+    // Go-live cash on hand, through the Opening balances tab.
+    await win.click('[data-nav=finance]');
+    await win.click('[data-testid=fin-tab-opening]');
+    await win.click('[data-testid=new-opening]');
+    await win.selectOption('[data-testid=opening-target]', 'MONEY_ACCOUNT');
+    await win.selectOption('[data-testid=opening-account]', cash.id);
+    await win.fill('[data-testid=opening-amount]', '3000');
+    await win.click('[data-testid=opening-dialog] [data-testid=save]');
+    await win.waitForSelector('[data-testid=print-dialog]');
+    assert.match(await text('[data-testid=print-dialog]'), /OPB-\d{4}-000001/);
+    await closePrint();
+    assert.match(await text('[data-testid=opening-balances]'), /3,000\.00/);
+    // Deposit cash in the bank.
+    await win.click('[data-testid=fin-tab-treasury]');
+    await win.click('[data-testid=new-transfer]');
+    await win.selectOption('[data-testid=transfer-from]', cash.id);
+    await win.selectOption('[data-testid=transfer-to]', bank.id);
+    await win.fill('[data-testid=transfer-amount]', '2000');
+    await win.click('[data-testid=transfer-dialog] [data-testid=save]');
+    await win.waitForSelector('[data-testid=print-dialog]');
+    assert.match(await text('[data-testid=print-dialog]'), /TRF-\d{4}-000001/);
+    await closePrint();
+    await win.waitForFunction(() => /البنك الأهلي[\s\S]*2,000\.00/.test(document.querySelector('[data-testid=accounts-table]')?.textContent ?? ''));
+    assert.match(await text('[data-testid=transfers]'), /TRF-\d{4}-000001/);
+    await shot('treasury-after-transfer');
+    // A customer credit (overpaid before go-live) settles a new ticket record.
+    const customer = (await must('customers.list', { query: 'احمد' })).items[0];
+    await must('openingBalances.record', { target: 'CUSTOMER', targetId: customer.id, side: 'OWED_BY_OFFICE', currency: 'EGP', amountMinor: 50000 });
+    const airline = (await must('airlines.list', { query: 'MS' })).items[0];
+    const supplier = (await must('suppliers.list', {})).items[0];
+    let r = await must('bookings.create', { customerId: customer.id, pnr: 'CRD123', supplierId: supplier.id });
+    r = await must('bookings.savePassenger', { bookingId: r.id, passenger: { givenName: 'AHMED', surname: 'ALI' } });
+    r = await must('bookings.saveSegment', { bookingId: r.id, segment: { airlineId: airline.id, flightNumber: '911', origin: 'CAI', destination: 'DXB', departureDate: '2026-12-01', departureTime: '08:00', arrivalDate: '2026-12-01', arrivalTime: '12:00' } });
+    r = await must('bookings.savePriceItem', { bookingId: r.id, item: { passengerId: r.passengers[0].id, supplierId: supplier.id, fareMinor: 200000, costMinor: 180000, costCurrency: 'EGP' } });
+    r = await must('bookings.issue', { id: r.id, rowVersion: r.rowVersion });
+    await win.click('[data-testid=fin-tab-customer]');
+    await win.fill('[data-testid=customer-search]', 'احمد');
+    await win.click('[data-testid=customer-option] >> nth=0');
+    await win.waitForSelector('[data-testid=open-items]');
+    await win.click('[data-testid=fin-apply-EGP]');
+    await win.waitForSelector('[data-testid=apply-credit-dialog]');
+    assert.match(await text('[data-testid=apply-credit-dialog]'), /500\.00/);
+    await win.click('[data-testid=apply-credit-dialog] [data-testid=save]');
+    await win.waitForSelector('[data-testid=print-dialog]');
+    assert.match(await text('[data-testid=print-dialog]'), /APL-\d{4}-000001/);
+    await closePrint();
+    const after = await must('bookings.get', { id: r.id });
+    assert.deepEqual([after.customer[0].paidMinor, after.customer[0].balanceMinor], [50000, 150000]);
+    await win.waitForFunction(() => /1,500\.00/.test(document.querySelector('[data-testid=open-items]')?.textContent ?? ''));
   });
 
   await step('global-search-and-english', async () => {

@@ -40,7 +40,7 @@ import type {
 import type { CompanyService } from './company-service';
 import { actorOf, hasAny, requirePermission, tx, type Actor, type ServiceDeps } from './context';
 import type { CurrencyService } from './currency-service';
-import { SUPPLIER_DOC_TYPES, readDocuments } from './document-reader';
+import { documentSide, readDocuments } from './document-reader';
 import { indexForSearch, maskIdentifier, nextSequenceNumber, searchClause } from './masterdata-support';
 import type { PostingService } from './posting-service';
 import type { ReferenceService } from './reference-service';
@@ -233,7 +233,7 @@ export class BookingService {
     const quoteSale = items.reduce((s, i) => s + saleTotal(toItem(i)), 0);
 
     const docs = readDocuments(db, `(d.booking_id = ? OR d.id IN (SELECT document_id FROM fin_document_line WHERE booking_id = ?))`, [id, id])
-      .filter((d) => viewCost || !SUPPLIER_DOC_TYPES.includes(d.docType));
+      .filter((d) => viewCost || documentSide(d) !== 'SUPPLIER');
     // Same figures as v_booking_financials, read through ix_jl_booking: the view groups every
     // booking before filtering, which scans the whole journal (measured in the performance test).
     const fin = db

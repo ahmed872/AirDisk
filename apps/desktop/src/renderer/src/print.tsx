@@ -87,6 +87,15 @@ export function DocumentPrint({ doc, onClose }: { doc: DocumentDto; onClose: () 
           {party && <tr><th>{doc.customerName ? t('billTo') : t('supplier')}</th><td colSpan={3}>{party}</td></tr>}
           {doc.bookingNo && <tr><th>{t('recordNo')}</th><td className="ltr">{doc.bookingNo}</td><th>{t('currency')}</th><td className="ltr">{doc.currency}</td></tr>}
           {doc.paymentMethod && <tr><th>{t('method')}</th><td>{isTKey(doc.paymentMethod) ? t(doc.paymentMethod as TKey) : doc.paymentMethod}</td><th>{t('moneyAccount')}</th><td>{doc.moneyAccountName}</td></tr>}
+          {doc.docType === 'MONEY_TRANSFER' && (
+            <tr><th>{t('type')}</th><td>{doc.reasonCode && isTKey(`kind_${doc.reasonCode}`) ? t(`kind_${doc.reasonCode}` as TKey) : ''}</td>
+              <th>{doc.reasonCode === 'OWNER_CAPITAL' ? t('toAccount') : t('fromAccount')}</th><td>{doc.moneyAccountName}</td></tr>
+          )}
+          {doc.counterMoneyAccountName && <tr><th>{t('toAccount')}</th><td colSpan={3}>{doc.counterMoneyAccountName}</td></tr>}
+          {doc.docType === 'OPENING_BALANCE' && (
+            <tr><th>{t('balanceSide')}</th><td>{doc.moneyAccountName ? t('cashHeld') : t(doc.reasonCode === 'OPENING_DEBIT' ? 'side_OWED_TO_OFFICE' : 'side_OWED_BY_OFFICE')}</td>
+              <th>{doc.moneyAccountName ? t('moneyAccount') : t('currency')}</th><td>{doc.moneyAccountName ?? doc.currency}</td></tr>
+          )}
           {doc.paymentReference && <tr><th>{t('reference')}</th><td colSpan={3} className="ltr">{doc.paymentReference}</td></tr>}
           {doc.isReversal && <tr><th>{t('reversalOf')}</th><td colSpan={3} className="ltr">{doc.reversalOfNo} — {doc.description}</td></tr>}
         </tbody>

@@ -101,9 +101,47 @@ export function buildJournal(doc: PricedDocument, ctx: PostingContext): JournalL
       }
       cash('CREDIT');
       break;
+    // P10: money only changes place; a foreign-currency balance leaves its source at the value it is carried at.
     case 'MONEY_TRANSFER':
-    case 'BALANCE_APPLICATION':
+      for (const l of doc.lines) {
+        const base = l.carryingBaseMinor ?? l.baseAmountMinor;
+        if (doc.reasonCode === 'ACCOUNT_TRANSFER') {
+          push(ACCOUNT.CASH, 'DEBIT', l.amountMinor, base, { moneyAccountId: doc.counterMoneyAccountId });
+          push(ACCOUNT.CASH, 'CREDIT', l.amountMinor, base, { moneyAccountId: doc.moneyAccountId });
+        } else if (doc.reasonCode === 'OWNER_CAPITAL') {
+          push(ACCOUNT.CASH, 'DEBIT', l.amountMinor, base, { moneyAccountId: doc.moneyAccountId });
+          push(ACCOUNT.OWNER, 'CREDIT', l.amountMinor, base, {});
+        } else {
+          push(ACCOUNT.OWNER, 'DEBIT', l.amountMinor, base, {});
+          push(ACCOUNT.CASH, 'CREDIT', l.amountMinor, base, { moneyAccountId: doc.moneyAccountId });
+        }
+      }
+      break;
+    // P12: go-live balances against opening-balance equity, held on account (no record).
     case 'OPENING_BALANCE':
+      for (const l of doc.lines) {
+        const side: Side = doc.reasonCode === 'OPENING_DEBIT' ? 'DEBIT' : 'CREDIT';
+        if (doc.customerId) push(ACCOUNT.RECEIVABLE, side, l.amountMinor, l.baseAmountMinor, { customerId: doc.customerId, bookingId: null });
+        else if (doc.supplierId) push(ACCOUNT.PAYABLE, side, l.amountMinor, l.baseAmountMinor, { supplierId: doc.supplierId, bookingId: null });
+        else push(ACCOUNT.CASH, side, l.amountMinor, l.baseAmountMinor, { moneyAccountId: doc.moneyAccountId });
+        push(ACCOUNT.OPENING_EQUITY, opposite(side), l.amountMinor, l.baseAmountMinor, {});
+      }
+      break;
+    // P11: a party's credit (on account, or on another record = doc.bookingId) settles a record's balance. No cash, no P&L.
+    case 'BALANCE_APPLICATION':
+      for (const l of doc.lines) {
+        const source = l.sourceCarryingBaseMinor ?? l.baseAmountMinor;
+        const target = l.carryingBaseMinor ?? l.baseAmountMinor;
+        const from = doc.bookingId ?? null;
+        if (doc.customerId) {
+          push(ACCOUNT.RECEIVABLE, 'DEBIT', l.amountMinor, source, { customerId: doc.customerId, bookingId: from });
+          push(ACCOUNT.RECEIVABLE, 'CREDIT', l.amountMinor, target, { customerId: doc.customerId, bookingId: l.bookingId ?? null });
+        } else {
+          push(ACCOUNT.PAYABLE, 'DEBIT', l.amountMinor, target, { supplierId: doc.supplierId, bookingId: l.bookingId ?? null });
+          push(ACCOUNT.PAYABLE, 'CREDIT', l.amountMinor, source, { supplierId: doc.supplierId, bookingId: from });
+        }
+      }
+      break;
     case 'FX_ADJUSTMENT':
       throw new DomainError(ErrorCode.UNSUPPORTED_DOCUMENT, `${doc.docType} posting is not available in this version`);
     default: {
@@ -117,7 +155,7 @@ export function buildJournal(doc: PricedDocument, ctx: PostingContext): JournalL
   const { debitBaseMinor, creditBaseMinor } = journalTotals(out);
   const diff = debitBaseMinor - creditBaseMinor;
   if (diff !== 0) {
-    const hasCarrying = doc.lines.some((l) => l.carryingBaseMinor !== undefined);
+    const hasCarrying = doc.lines.some((l) => l.carryingBaseMinor !== undefined || l.sourceCarryingBaseMinor !== undefined);
     if (!hasCarrying) throw new DomainError(ErrorCode.UNBALANCED_ENTRY, 'Posting rule produced an unbalanced journal', { diff });
     out.push({
       accountCode: ACCOUNT.FX,

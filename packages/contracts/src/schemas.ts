@@ -353,6 +353,26 @@ export const commandSchemas = {
   'payments.paySupplier': paymentInput,
   'payments.supplierRefund': paymentInput,
   'payments.openItems': z.object({ party: z.enum(['CUSTOMER', 'SUPPLIER']), partyId: ulid }).strict(),
+  'openingBalances.record': z
+    .object({
+      target: z.enum(['CUSTOMER', 'SUPPLIER', 'MONEY_ACCOUNT']), targetId: ulid, side: z.enum(['OWED_TO_OFFICE', 'OWED_BY_OFFICE']),
+      currency: currencyCode, amountMinor: minor, date: isoDate.optional().nullable(), exchangeRate: rateText.optional().nullable(), notes: optText(500),
+    })
+    .strict(),
+  'openingBalances.list': z.object({}).strict(),
+  'treasury.transfer': z
+    .object({
+      kind: z.enum(['ACCOUNT_TRANSFER', 'OWNER_CAPITAL', 'OWNER_DRAWING']), fromAccountId: ulid.optional().nullable(), toAccountId: ulid.optional().nullable(),
+      amountMinor: minor, date: isoDate.optional().nullable(), exchangeRate: rateText.optional().nullable(), reference: optText(60), notes: optText(500),
+    })
+    .strict(),
+  'treasury.transfers': z.object({ from: isoDate, to: isoDate }).strict(),
+  'balances.apply': z
+    .object({
+      party: z.enum(['CUSTOMER', 'SUPPLIER']), partyId: ulid, currency: currencyCode, fromBookingId: ulid.optional().nullable(),
+      allocations: z.array(z.object({ bookingId: ulid, amountMinor: minor }).strict()).min(1).max(100), date: isoDate.optional().nullable(), notes: optText(500),
+    })
+    .strict(),
   'documents.get': idOnly,
   'documents.cancel': z.object({ id: ulid, reason: text(500), date: isoDate.optional().nullable() }).strict(),
 

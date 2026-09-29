@@ -555,7 +555,7 @@ describe('master data for operations', () => {
     expect((await fail(env, 'currency.setActive', { currencyCode: 'EGP', active: false }, s)).reason).toBe('BASE_CURRENCY');
     const about = await ok<{ schemaVersion: number; latestSchemaVersion: number; migrations: { name: string }[] }>(env, 'system.about', {}, s);
     expect(about.schemaVersion).toBe(MIGRATIONS.length);
-    expect(about.migrations.map((m) => m.name)).toEqual(['initial', 'master_data', 'operations', 'performance_indexes']);
+    expect(about.migrations.map((m) => m.name)).toEqual(['initial', 'master_data', 'operations', 'performance_indexes', 'ledger_completion']);
   });
 });
 

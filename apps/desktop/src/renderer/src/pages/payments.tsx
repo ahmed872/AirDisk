@@ -27,10 +27,11 @@ export interface OpenItem {
  * only be allocated up to what is open; anything beyond must be explicitly
  * routed on-account (needs permission) — never guessed.
  */
-export function PaymentDialog({ kind, partyId, partyName, currency: initialCurrency, items, summary, canOnAccount, onDone, onClose }: {
+export function PaymentDialog({ kind, partyId, partyName, currency: initialCurrency, items, summary, canOnAccount, onAccountDueMinor = 0, onDone, onClose }: {
   kind: PayKind; partyId: string; partyName: string; currency: string; items: OpenItem[];
   summary?: { totalMinor: number; paidMinor: number; remainingMinor: number } | null;
-  canOnAccount: boolean; onDone: (doc: DocumentDto) => void; onClose: () => void;
+  /** What the party owes on account (e.g. an opening balance): paying it is not an overpayment. */
+  canOnAccount: boolean; onAccountDueMinor?: number; onDone: (doc: DocumentDto) => void; onClose: () => void;
 }) {
   const { t, errorMessage } = useI18n();
   const m = useMoney();
@@ -64,7 +65,8 @@ export function PaymentDialog({ kind, partyId, partyName, currency: initialCurre
   }, [amount, items]);
   const allocated = Object.values(alloc).reduce((s, v) => s + v, 0);
   const onAccountMinor = Math.max(0, (amount ?? 0) - allocated);
-  const invalid = !amount || amount <= 0 || !accountId || allocated > (amount ?? 0) || (onAccountMinor > 0 && !canOnAccount);
+  const overpaid = Math.max(0, onAccountMinor - onAccountDueMinor);
+  const invalid = !amount || amount <= 0 || !accountId || allocated > (amount ?? 0) || (overpaid > 0 && !canOnAccount);
   const submit = async () => {
     setBusy(true);
     setError(null);
@@ -129,8 +131,9 @@ export function PaymentDialog({ kind, partyId, partyName, currency: initialCurre
           </table>
         </>
       )}
+      {onAccountDueMinor > 0 && <p className="hint">{t('onAccountDue')}: <span className="ltr">{m.fmt(onAccountDueMinor, currency)}</span></p>}
       {onAccountMinor > 0 && (
-        <Alert kind={canOnAccount ? 'warn' : 'error'}>{t('onAccount')}: <span className="ltr">{m.fmt(onAccountMinor, currency)}</span>{!canOnAccount && ` — ${t('noPermission')}`}</Alert>
+        <Alert kind={overpaid === 0 ? 'ok' : canOnAccount ? 'warn' : 'error'}>{t('onAccount')}: <span className="ltr">{m.fmt(onAccountMinor, currency)}</span>{overpaid > 0 && !canOnAccount && ` — ${t('noPermission')}`}</Alert>
       )}
     </Modal>
   );

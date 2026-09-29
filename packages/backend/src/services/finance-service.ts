@@ -16,13 +16,14 @@ import {
   type DocumentLineDraft,
   type PaymentMethod,
   type SupplierSide,
+  type TransferKind,
 } from '@airdesk/domain';
 import type { CancellationDto, DocumentDto } from '@airdesk/contracts';
 import type { BookingService } from './booking-service';
 import type { CompanyService } from './company-service';
 import { actorOf, hasAny, requirePermission, tx, type Actor, type ServiceDeps } from './context';
 import type { CurrencyService } from './currency-service';
-import { readDocuments } from './document-reader';
+import { documentSide, readDocuments } from './document-reader';
 import { nextSequenceNumber } from './masterdata-support';
 import type { PostingService } from './posting-service';
 import type { ReferenceService } from './reference-service';
@@ -47,7 +48,41 @@ interface CancellationRow {
   supplier_status: SupplierSide; customer_status: CustomerSide; row_version: number;
 }
 
-const CANCELLABLE_DOCS = ['CUSTOMER_RECEIPT', 'CUSTOMER_REFUND', 'SUPPLIER_PAYMENT', 'SUPPLIER_REFUND', 'EXPENSE'];
+const CANCELLABLE_DOCS = ['CUSTOMER_RECEIPT', 'CUSTOMER_REFUND', 'SUPPLIER_PAYMENT', 'SUPPLIER_REFUND', 'EXPENSE', 'MONEY_TRANSFER', 'BALANCE_APPLICATION', 'OPENING_BALANCE'];
+
+export interface OpeningBalanceInput {
+  target: 'CUSTOMER' | 'SUPPLIER' | 'MONEY_ACCOUNT';
+  targetId: string;
+  /** OWED_TO_OFFICE: the customer/supplier owes the office, or cash held; OWED_BY_OFFICE: the office owes them. */
+  side: 'OWED_TO_OFFICE' | 'OWED_BY_OFFICE';
+  currency: string;
+  amountMinor: number;
+  date?: string | null;
+  exchangeRate?: string | null;
+  notes?: string | null;
+}
+
+export interface TransferInput {
+  kind: TransferKind;
+  fromAccountId?: string | null;
+  toAccountId?: string | null;
+  amountMinor: number;
+  date?: string | null;
+  exchangeRate?: string | null;
+  reference?: string | null;
+  notes?: string | null;
+}
+
+export interface ApplyBalanceInput {
+  party: 'CUSTOMER' | 'SUPPLIER';
+  partyId: string;
+  currency: string;
+  /** Where the credit sits: null = on account, otherwise a record that is in credit. */
+  fromBookingId?: string | null;
+  allocations: { bookingId: string; amountMinor: number }[];
+  date?: string | null;
+  notes?: string | null;
+}
 
 /**
  * Money workflows (owner requirements §11–§18, §24): customer receipts, supplier
@@ -71,7 +106,8 @@ export class FinanceService {
     const date = input.date ?? this.company.today();
     this.posting.assertBackdateAllowed(actor, date);
     const onAccount = this.checkSplit(input);
-    if (onAccount > 0) requirePermission(this.deps, actor, 'payment.accept_overpayment', 'payments.receive.onAccount');
+    // Paying an on-account debt (e.g. an opening balance) is not an overpayment; only the excess is.
+    if (onAccount > this.onAccountDue('CUSTOMER', input.partyId, input.currency)) requirePermission(this.deps, actor, 'payment.accept_overpayment', 'payments.receive.onAccount');
     const rate = this.docRate(actor, input.currency, date, input.exchangeRate);
     const id = tx(this.deps, () => {
       const customer = this.party('customer', input.partyId);
@@ -87,7 +123,7 @@ export class FinanceService {
         assertAllocationWithin(limit, a.amountMinor, b.booking_no);
         lines.push({ lineType: 'SETTLEMENT', amountMinor: a.amountMinor, bookingId: a.bookingId, ...this.carrying(open, a.amountMinor, input.currency) });
       }
-      if (onAccount > 0) lines.push({ lineType: 'SETTLEMENT', amountMinor: onAccount, bookingId: null });
+      lines.push(...this.onAccountLines('1200', 'customer_id', customer, input.currency, onAccount, 1));
       const doc = this.posting.post(actor, {
         docType: 'CUSTOMER_RECEIPT', docDate: date, customerId: customer, bookingId: input.allocations.length === 1 ? input.allocations[0]!.bookingId : null,
         currency: input.currency, exchangeRate: rate, moneyAccountId: input.moneyAccountId, paymentMethod: input.paymentMethod,
@@ -143,7 +179,7 @@ export class FinanceService {
     const date = input.date ?? this.company.today();
     this.posting.assertBackdateAllowed(actor, date);
     const onAccount = this.checkSplit(input);
-    if (onAccount > 0) requirePermission(this.deps, actor, 'payment.accept_overpayment', 'payments.paySupplier.onAccount');
+    if (onAccount > this.onAccountDue('SUPPLIER', input.partyId, input.currency)) requirePermission(this.deps, actor, 'payment.accept_overpayment', 'payments.paySupplier.onAccount');
     const rate = this.docRate(actor, input.currency, date, input.exchangeRate);
     const id = tx(this.deps, () => {
       const supplier = this.party('supplier', input.partyId);
@@ -154,7 +190,7 @@ export class FinanceService {
         assertAllocationWithin(Math.max(0, open.txn), a.amountMinor, this.bookingNo(a.bookingId));
         lines.push({ lineType: 'SETTLEMENT', amountMinor: a.amountMinor, bookingId: a.bookingId, ...this.carrying(open, a.amountMinor, input.currency) });
       }
-      if (onAccount > 0) lines.push({ lineType: 'SETTLEMENT', amountMinor: onAccount, bookingId: null });
+      lines.push(...this.onAccountLines('2100', 'supplier_id', supplier, input.currency, onAccount, -1));
       const doc = this.posting.post(actor, {
         docType: 'SUPPLIER_PAYMENT', docDate: date, supplierId: supplier, bookingId: input.allocations.length === 1 ? input.allocations[0]!.bookingId : null,
         currency: input.currency, exchangeRate: rate, moneyAccountId: input.moneyAccountId, paymentMethod: input.paymentMethod,
@@ -221,8 +257,10 @@ export class FinanceService {
    * adjustments or the cancellation workflow instead.
    */
   cancelDocument(actor: Actor, documentId: string, reason: string, date?: string | null): DocumentDto {
-    const original = this.deps.db.prepare('SELECT doc_type, booking_id FROM fin_document WHERE id = ?').get(documentId) as { doc_type: string; booking_id: string | null } | undefined;
+    const original = this.deps.db.prepare('SELECT doc_type, booking_id, reason_code FROM fin_document WHERE id = ?').get(documentId) as { doc_type: string; booking_id: string | null; reason_code: string | null } | undefined;
     if (!original) throw new DomainError(ErrorCode.NOT_FOUND, 'Document not found');
+    this.document(actor, documentId);
+    if (original.doc_type === 'MONEY_TRANSFER' && original.reason_code !== 'ACCOUNT_TRANSFER') requirePermission(this.deps, actor, 'treasury.owner_movements', 'documents.cancel.ownerMovement');
     if (!CANCELLABLE_DOCS.includes(original.doc_type)) {
       throw new DomainError(ErrorCode.VALIDATION, 'Invoices and bills are corrected with adjustments or a cancellation, not by cancelling the document', { reason: 'NOT_CANCELLABLE' });
     }
@@ -239,11 +277,151 @@ export class FinanceService {
   }
 
   assertCanSeeDocument(actor: Actor, d: DocumentDto): void {
-    const needed = d.docType.startsWith('SUPPLIER_') ? ['booking.view_cost', 'supplier.view_financial', 'payment.supplier.pay']
-      : d.docType === 'EXPENSE' ? ['expense.view', 'expense.create']
-        : ['booking.view', 'payment.customer.receive', 'report.statements'];
+    const side = documentSide(d);
+    const needed = side === 'SUPPLIER' ? ['booking.view_cost', 'supplier.view_financial', 'payment.supplier.pay']
+      : side === 'EXPENSE' ? ['expense.view', 'expense.create']
+        : side === 'TREASURY' ? ['treasury.view', 'treasury.transfer', 'finance.opening_balances']
+          : ['booking.view', 'payment.customer.receive', 'report.statements'];
     if (!hasAny(actor, needed)) throw new DomainError(ErrorCode.NOT_FOUND, 'Document not found');
-    if (d.bookingId && d.docType.startsWith('CUSTOMER_')) this.bookings.accessible(actor, d.bookingId);
+    if (side === 'CUSTOMER') for (const b of new Set([d.bookingId, ...d.lines.map((l) => l.bookingId)])) if (b) this.bookings.accessible(actor, b);
+  }
+
+  // ── Opening balances (Phase 0 §04 P12) ─────────────────────────────────
+  /** Go-live balance of a customer, supplier or money account, held on account against opening-balance equity. */
+  recordOpeningBalance(actor: Actor, input: OpeningBalanceInput): DocumentDto {
+    requirePermission(this.deps, actor, 'finance.opening_balances', 'openingBalances.record');
+    const date = input.date ?? this.company.today();
+    this.posting.assertBackdateAllowed(actor, date);
+    this.assertAmount(input.amountMinor);
+    if (input.target === 'MONEY_ACCOUNT' && input.side !== 'OWED_TO_OFFICE') throw fieldError('side', 'NEGATIVE_CASH', 'A money account opens with the cash it holds');
+    const rate = this.docRate(actor, input.currency, date, input.exchangeRate);
+    const id = tx(this.deps, () => {
+      const target = input.target === 'CUSTOMER' ? { customerId: this.party('customer', input.targetId) }
+        : input.target === 'SUPPLIER' ? { supplierId: this.party('supplier', input.targetId) }
+          : (this.assertAccount(input.targetId, input.currency), { moneyAccountId: input.targetId });
+      const doc = this.posting.post(actor, {
+        docType: 'OPENING_BALANCE', docDate: date, currency: input.currency, exchangeRate: rate, ...target,
+        reasonCode: input.side === 'OWED_TO_OFFICE' ? 'OPENING_DEBIT' : 'OPENING_CREDIT', description: optionalText(input.notes, 'notes', 500),
+        lines: [{ lineType: 'OPENING', amountMinor: input.amountMinor }],
+      });
+      this.deps.audit.append(actorOf(actor), {
+        action: 'finance.opening_balance_recorded', entityType: 'fin_document', entityId: doc.id,
+        metadata: { docNo: doc.docNo, target: input.target, targetId: input.targetId, side: input.side, amountMinor: input.amountMinor, currency: input.currency },
+      });
+      return doc.id;
+    });
+    return this.document(actor, id);
+  }
+
+  listOpeningBalances(actor: Actor): DocumentDto[] {
+    requirePermission(this.deps, actor, 'finance.opening_balances', 'openingBalances.list');
+    return readDocuments(this.deps.db, "d.doc_type = 'OPENING_BALANCE'", [], { withLines: false }).reverse();
+  }
+
+  // ── Treasury transfers, owner capital and drawings (Phase 0 §04 P10) ───
+  transferMoney(actor: Actor, input: TransferInput): DocumentDto {
+    requirePermission(this.deps, actor, 'treasury.transfer', 'treasury.transfer');
+    if (input.kind !== 'ACCOUNT_TRANSFER') requirePermission(this.deps, actor, 'treasury.owner_movements', 'treasury.ownerMovement');
+    const date = input.date ?? this.company.today();
+    this.posting.assertBackdateAllowed(actor, date);
+    this.assertAmount(input.amountMinor);
+    const source = input.kind === 'OWNER_CAPITAL' ? null : input.fromAccountId ?? null;
+    const dest = input.kind === 'OWNER_DRAWING' ? null : input.toAccountId ?? null;
+    if (input.kind !== 'OWNER_CAPITAL' && !source) throw fieldError('fromAccountId', 'REQUIRED', 'Choose the account the money leaves');
+    if (input.kind !== 'OWNER_DRAWING' && !dest) throw fieldError('toAccountId', 'REQUIRED', 'Choose the account the money goes to');
+    if (source && dest && source === dest) throw fieldError('toAccountId', 'SAME_ACCOUNT', 'Choose two different accounts');
+    const currency = this.reference.moneyAccount((source ?? dest)!).currency_code;
+    const rate = this.docRate(actor, currency, date, input.exchangeRate);
+    const id = tx(this.deps, () => {
+      if (source) this.assertAccount(source, currency);
+      if (dest) {
+        const a = this.reference.moneyAccount(dest);
+        if (a.currency_code !== currency) throw fieldError('toAccountId', 'CURRENCY_MISMATCH', `Both accounts must hold ${currency}`);
+        this.assertAccount(dest, currency);
+      }
+      let carrying = {};
+      if (source) {
+        const held = this.accountBalance(source, currency);
+        if (held.txn < input.amountMinor) throw new DomainError(ErrorCode.VALIDATION, 'The account does not hold that much', { field: 'amountMinor', reason: 'INSUFFICIENT_FUNDS', availableMinor: held.txn });
+        carrying = this.carrying(held, input.amountMinor, currency);
+      }
+      const doc = this.posting.post(actor, {
+        docType: 'MONEY_TRANSFER', docDate: date, currency, exchangeRate: rate, reasonCode: input.kind,
+        moneyAccountId: (source ?? dest)!, counterMoneyAccountId: source && dest ? dest : null,
+        paymentReference: optionalText(input.reference, 'reference', 60), description: optionalText(input.notes, 'notes', 500),
+        lines: [{ lineType: 'TRANSFER', amountMinor: input.amountMinor, ...carrying }],
+      });
+      this.deps.audit.append(actorOf(actor), {
+        action: 'treasury.transferred', entityType: 'fin_document', entityId: doc.id,
+        metadata: { docNo: doc.docNo, kind: input.kind, fromAccountId: source, toAccountId: dest, amountMinor: input.amountMinor, currency },
+      });
+      return doc.id;
+    });
+    return this.document(actor, id);
+  }
+
+  listTransfers(actor: Actor, from: string, to: string): DocumentDto[] {
+    requirePermission(this.deps, actor, ['treasury.view', 'treasury.transfer'], 'treasury.transfers');
+    return readDocuments(this.deps.db, "d.doc_type = 'MONEY_TRANSFER' AND d.doc_date BETWEEN ? AND ?", [from, to], { withLines: false }).reverse();
+  }
+
+  // ── Applying credits (Phase 0 §04 P11) ─────────────────────────────────
+  /**
+   * Uses a party's credit (on account, or on a record in credit) to settle
+   * other records of the same party. No cash moves and profit is unchanged.
+   */
+  applyBalance(actor: Actor, input: ApplyBalanceInput): DocumentDto {
+    requirePermission(this.deps, actor, 'balance.apply', 'balances.apply');
+    if (input.party === 'SUPPLIER') requirePermission(this.deps, actor, ['supplier.view_financial', 'payment.supplier.pay'], 'balances.apply.supplier');
+    const date = input.date ?? this.company.today();
+    this.posting.assertBackdateAllowed(actor, date);
+    if (input.allocations.length === 0) throw fieldError('allocations', 'REQUIRED', 'Choose at least one record');
+    for (const a of input.allocations) this.assertAmount(a.amountMinor, 'allocations');
+    if (new Set(input.allocations.map((a) => a.bookingId)).size !== input.allocations.length) throw fieldError('allocations', 'DUPLICATE_BOOKING', 'Each record once');
+    const from = input.fromBookingId ?? null;
+    if (from && input.allocations.some((a) => a.bookingId === from)) throw fieldError('allocations', 'SAME_RECORD', 'A credit cannot be applied to its own record');
+    const rate = this.docRate(actor, input.currency, date, null);
+    const customer = input.party === 'CUSTOMER';
+    const account = customer ? '1200' : '2100';
+    const col = customer ? 'customer_id' : 'supplier_id';
+    const sign = customer ? 1 : -1;
+    const id = tx(this.deps, () => {
+      const partyId = this.party(customer ? 'customer' : 'supplier', input.partyId);
+      const recordOf = (bookingId: string) => {
+        if (!customer) return { no: this.bookingNo(bookingId), status: null };
+        const b = this.bookings.accessible(actor, bookingId);
+        if (b.customer_id !== partyId) throw fieldError('allocations', 'WRONG_PARTY', 'The record belongs to another customer');
+        return { no: b.booking_no, status: b.status };
+      };
+      if (from) recordOf(from);
+      const src = this.openItem(account, col, partyId, from, input.currency, sign);
+      const available = Math.max(0, -src.txn);
+      assertAllocationWithin(available, input.allocations.reduce((s, a) => s + a.amountMinor, 0), from ? this.bookingNo(from) : 'on-account credit');
+      const lines: DocumentLineDraft[] = input.allocations.map((a) => {
+        const r = recordOf(a.bookingId);
+        if (r.status === 'DISCARDED' || r.status === 'VOIDED') throw fieldError('allocations', 'BOOKING_CLOSED', 'The record is closed');
+        const open = this.openItem(account, col, partyId, a.bookingId, input.currency, sign);
+        const limit = r.status === 'DRAFT' || r.status === 'RESERVED' ? this.quoteOpen(a.bookingId, input.currency, open.txn) : Math.max(0, open.txn);
+        assertAllocationWithin(limit, a.amountMinor, r.no);
+        const target = this.carrying(open, a.amountMinor, input.currency).carryingBaseMinor;
+        const source = this.carrying({ txn: -src.txn, base: -src.base }, a.amountMinor, input.currency).carryingBaseMinor;
+        return {
+          lineType: 'APPLICATION', amountMinor: a.amountMinor, bookingId: a.bookingId,
+          ...(target !== undefined ? { carryingBaseMinor: target } : {}), ...(source !== undefined ? { sourceCarryingBaseMinor: source } : {}),
+        };
+      });
+      const doc = this.posting.post(actor, {
+        docType: 'BALANCE_APPLICATION', docDate: date, currency: input.currency, exchangeRate: rate,
+        ...(customer ? { customerId: partyId } : { supplierId: partyId }), bookingId: from, description: optionalText(input.notes, 'notes', 500), lines,
+      });
+      this.deps.audit.append(actorOf(actor), {
+        action: 'balance.applied', entityType: 'fin_document', entityId: doc.id,
+        metadata: { docNo: doc.docNo, party: input.party, partyId, fromBookingId: from, allocations: input.allocations.length, amountMinor: doc.totalMinor, currency: input.currency },
+      });
+      for (const b of [from, ...input.allocations.map((a) => a.bookingId)]) if (b) this.bookings.reindex(b);
+      return doc.id;
+    });
+    return this.document(actor, id);
   }
 
   // ── Cancellation / refund workflow (Phase 0 §05-4) ─────────────────────
@@ -510,6 +688,34 @@ export class FinanceService {
   private carrying(open: { txn: number; base: number }, amount: number, currency: string): { carryingBaseMinor?: number } {
     if (currency === this.company.core().baseCurrency || open.txn <= 0 || open.base <= 0) return {};
     return { carryingBaseMinor: Math.max(1, Math.round((open.base * amount) / open.txn)) };
+  }
+
+  /** What the party owes on account (e.g. an opening balance), in party-normal sign; 0 if they are in credit. */
+  private onAccountDue(party: 'CUSTOMER' | 'SUPPLIER', partyId: string, currency: string): number {
+    const open = party === 'CUSTOMER' ? this.openItem('1200', 'customer_id', partyId, null, currency) : this.openItem('2100', 'supplier_id', partyId, null, currency, -1);
+    return Math.max(0, open.txn);
+  }
+
+  /** On-account part of a payment: first settles what is owed on account (at its carrying value), the rest becomes a credit. */
+  private onAccountLines(account: '1200' | '2100', col: 'customer_id' | 'supplier_id', partyId: string, currency: string, amount: number, sign: 1 | -1): DocumentLineDraft[] {
+    if (amount <= 0) return [];
+    const open = this.openItem(account, col, partyId, null, currency, sign);
+    const settle = Math.min(amount, Math.max(0, open.txn));
+    const lines: DocumentLineDraft[] = [];
+    if (settle > 0) lines.push({ lineType: 'SETTLEMENT', amountMinor: settle, bookingId: null, ...this.carrying(open, settle, currency) });
+    if (amount - settle > 0) lines.push({ lineType: 'SETTLEMENT', amountMinor: amount - settle, bookingId: null });
+    return lines;
+  }
+
+  private accountBalance(accountId: string, currency: string): { txn: number; base: number } {
+    return this.deps.db
+      .prepare(`SELECT COALESCE(SUM(debit_minor - credit_minor), 0) AS txn, COALESCE(SUM(debit_base_minor - credit_base_minor), 0) AS base
+                FROM journal_line WHERE account_code = '1110' AND money_account_id = ? AND currency_code = ?`)
+      .get(accountId, currency) as { txn: number; base: number };
+  }
+
+  private assertAmount(amount: number, field = 'amountMinor'): void {
+    if (!Number.isSafeInteger(amount) || amount <= 0) throw fieldError(field, 'INVALID_AMOUNT', 'The amount must be positive');
   }
 
   private checkSplit(input: PaymentInput): number {

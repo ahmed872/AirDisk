@@ -294,9 +294,14 @@ export const HANDLERS: { [C in CommandName]: HandlerDef<C> } = {
     access: perm('payment.customer.receive', 'payment.customer.refund', 'payment.supplier.pay', 'payment.supplier.record_refund'),
     run: (ctx, i) => ctx.backend.svc.finance.openItems(actor(ctx), i.party, i.partyId),
   },
+  'openingBalances.record': { access: perm('finance.opening_balances'), run: (ctx, i) => ctx.backend.svc.finance.recordOpeningBalance(actor(ctx), i) },
+  'openingBalances.list': { access: perm('finance.opening_balances'), run: (ctx) => ctx.backend.svc.finance.listOpeningBalances(actor(ctx)) },
+  'treasury.transfer': { access: perm('treasury.transfer'), run: (ctx, i) => ctx.backend.svc.finance.transferMoney(actor(ctx), i) },
+  'treasury.transfers': { access: perm('treasury.view', 'treasury.transfer'), run: (ctx, i) => ctx.backend.svc.finance.listTransfers(actor(ctx), i.from, i.to) },
+  'balances.apply': { access: perm('balance.apply'), run: (ctx, i) => ctx.backend.svc.finance.applyBalance(actor(ctx), i) },
   'documents.get': { access: AUTH, run: (ctx, i) => ctx.backend.svc.finance.document(actor(ctx), i.id) },
   'documents.cancel': {
-    access: perm('payment.customer.reverse', 'payment.supplier.reverse', 'expense.reverse'),
+    access: perm('payment.customer.reverse', 'payment.supplier.reverse', 'expense.reverse', 'treasury.transfer', 'balance.apply', 'finance.opening_balances'),
     run: (ctx, i) => ctx.backend.svc.finance.cancelDocument(actor(ctx), i.id, i.reason, i.date),
   },
 

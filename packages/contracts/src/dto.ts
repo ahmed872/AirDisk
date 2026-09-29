@@ -512,6 +512,9 @@ export interface DocumentDto {
   cancellationRequestId: string | null;
   moneyAccountId: string | null;
   moneyAccountName: string | null;
+  /** Money transfers between accounts: the receiving account. */
+  counterMoneyAccountId: string | null;
+  counterMoneyAccountName: string | null;
   paymentMethod: string | null;
   paymentReference: string | null;
   externalReference: string | null;
